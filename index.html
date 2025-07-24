@@ -46,12 +46,11 @@
     }
 
     function drawPopup(props) {
-      return `
-        <strong>Election District:</strong> ${props.NAME}<br><br>
-        <strong>${props.candidateA_name}:</strong> ${props.candidateA_percent}% (${props.candidateA_votes} votes)<br>
-        <strong>${props.candidateB_name}:</strong> ${props.candidateB_percent}% (${props.candidateB_votes} votes)<br>
-        <strong>Margin:</strong> ${props.percent_difference}%
-      `;
+      const name = props.NAME ?? "Unnamed District";
+      return `<strong>Election District:</strong> ${name}<br><br>` +
+        Object.entries(props)
+          .map(([key, value]) => `<b>${key}:</b> ${value ?? "N/A"}`)
+          .join("<br>");
     }
 
     function loadGeoJSON(data, csvData = null) {
@@ -77,7 +76,7 @@
       geojsonLayer = L.geoJSON(data, {
         style: function (feature) {
           const margin = feature.properties.percent_difference;
-          const norm = typeof margin === "number" ? margin / 100 : 0;
+          const norm = isNaN(margin) ? 0 : margin / 100;
           return {
             fillColor: getColor(norm),
             color: "#333",
@@ -87,9 +86,10 @@
         },
         onEachFeature: function (feature, layer) {
           const p = feature.properties;
-          layer.bindPopup(`<strong>Election District:</strong> ${p.NAME}<br><br>` + Object.entries(p).map(([key, value]) => `<b>${key}:</b> ${value ?? "N/A"}`).join("<br>")
-  );
-}
+          layer.bindPopup(drawPopup(p));
+        }
+      }).addTo(map);
+    }
 
     fetch("Election_District.geojson")
       .then(res => res.json())
