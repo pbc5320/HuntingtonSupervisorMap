@@ -1,0 +1,119 @@
+<!DOCTYPE html>
+<html>
+<head>
+  <meta charset="utf-8" />
+  <title>Huntington Election District Map</title>
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css" />
+  <style>
+    body { margin: 0; }
+    #map { width: 100%; height: 100vh; }
+    #uploadBox {
+      position: absolute;
+      top: 10px;
+      left: 10px;
+      background: white;
+      padding: 10px;
+      z-index: 1000;
+      border-radius: 5px;
+      box-shadow: 0 0 5px rgba(0,0,0,0.3);
+    }
+  </style>
+</head>
+<body>
+  <div id="uploadBox">
+    <label for="csvFile">Upload new CSV:</label>
+    <input type="file" id="csvFile" accept=".csv" />
+  </div>
+  <div id="map"></div>
+
+  <script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"></script>
+  <script src="https://cdn.jsdelivr.net/npm/papaparse@5.4.1/papaparse.min.js"></script>
+  <script src="https://unpkg.com/chroma-js"></script>
+
+  <script>
+    const map = L.map('map').setView([40.85, -73.4], 12);
+
+    L.tileLayer("https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png", {
+      maxZoom: 19,
+      attribution: '&copy; OpenStreetMap contributors'
+    }).addTo(map);
+
+    let geojsonLayer;
+
+    function getColor(value) {
+      return chroma.scale(['blue', 'white', 'red']).domain([-1, 0, 1])(value).hex();
+    }
+
+    function drawPopup(props) {
+      return \`
+        <strong>Election District:</strong> \${props.NAME}<br><br>
+        <strong>\${props.candidateA_name}:</strong> \${props.candidateA_percent}% (\${props.candidateA_votes} votes)<br>
+        <strong>\${props.candidateB_name}:</strong> \${props.candidateB_percent}% (\${props.candidateB_votes} votes)<br>
+        <strong>Margin:</strong> \${props.percent_difference}%
+      \`;
+    }
+
+    function loadGeoJSON(data, csvData = null) {
+      if (geojsonLayer) {
+        map.removeLayer(geojsonLayer);
+      }
+
+      const csvMap = new Map();
+      if (csvData) {
+        csvData.forEach(row => {
+          csvMap.set(String(row["PRECINCTID"]), row);
+        });
+      }
+
+      data.features.forEach(f => {
+        const precinct = String(f.properties.PRECINCTID);
+        const row = csvMap.get(precinct);
+        if (row) {
+          f.properties = { ...f.properties, ...row };
+        }
+      });
+
+      geojsonLayer = L.geoJSON(data, {
+        style: function (feature) {
+          const margin = feature.properties.percent_difference;
+          const norm = typeof margin === "number" ? margin / 100 : 0;
+          return {
+            fillColor: getColor(norm),
+            color: "#333",
+            weight: 1,
+            fillOpacity: 0.7
+          };
+        },
+        onEachFeature: function (feature, layer) {
+          const p = feature.properties;
+          if (p.candidateA_name && p.candidateB_name && p.candidateA_votes && p.candidateB_votes) {
+            layer.bindPopup(drawPopup(p));
+          } else {
+            layer.bindPopup(\`<strong>Election District:</strong> \${p.NAME}\`);
+          }
+        }
+      }).addTo(map);
+    }
+
+    fetch("Election_District.geojson")
+      .then(res => res.json())
+      .then(data => loadGeoJSON(data));
+
+    document.getElementById("csvFile").addEventListener("change", function (e) {
+      const file = e.target.files[0];
+      if (file) {
+        Papa.parse(file, {
+          header: true,
+          dynamicTyping: true,
+          complete: function(results) {
+            fetch("Election_District.geojson")
+              .then(res => res.json())
+              .then(data => loadGeoJSON(data, results.data));
+          }
+        });
+      }
+    });
+  </script>
+</body>
+</html>
