@@ -87,14 +87,9 @@
         },
         onEachFeature: function (feature, layer) {
           const p = feature.properties;
-          if (p.candidateA_name && p.candidateB_name && p.candidateA_votes && p.candidateB_votes) {
-            layer.bindPopup(drawPopup(p));
-          } else {
-            layer.bindPopup(`<strong>Election District:</strong> ${p.NAME}`);
-          }
-        }
-      }).addTo(map);
-    }
+          layer.bindPopup(`<strong>Election District:</strong> ${p.NAME}<br><br>` + Object.entries(p).map(([key, value]) => `<b>${key}:</b> ${value ?? "N/A"}`).join("<br>")
+  );
+}
 
     fetch("Election_District.geojson")
       .then(res => res.json())
