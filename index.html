@@ -42,15 +42,30 @@
     let geojsonLayer;
 
     function getColor(value) {
-      return chroma.scale(['blue', 'white', 'red']).domain([-1, 0, 1])(value).hex();
+      // Custom dark blue to white to deep red gradient
+      return chroma.scale(['#1a237e', '#ffffff', '#b71c1c']) // deep blue to white to deep red
+        .domain([-1, 0, 1])(value)
+        .hex();
     }
 
     function drawPopup(props) {
       const name = props.NAME ?? "Unnamed District";
-      return `<strong>Election District:</strong> ${name}<br><br>` +
-        Object.entries(props)
-          .map(([key, value]) => `<b>${key}:</b> ${value ?? "N/A"}`)
-          .join("<br>");
+
+      const excludeKeys = new Set([
+        "OBJECTID", "COUNTY", "LASTUPDATE", "POLLINGID", "Shape_Length", "Shape_Area"
+      ]);
+
+      const content = Object.entries(props)
+        .filter(([key]) => !excludeKeys.has(key))
+        .map(([key, value]) => {
+          if (key.toLowerCase().includes("percent") && typeof value === "number") {
+            return `<b>${key}:</b> ${value}%`;
+          }
+          return `<b>${key}:</b> ${value ?? "N/A"}`;
+        })
+        .join("<br>");
+
+      return `<strong>Election District:</strong> ${name}<br><br>${content}`;
     }
 
     function loadGeoJSON(data, csvData = null) {
