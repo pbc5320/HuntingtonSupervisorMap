@@ -29,7 +29,7 @@
 
   <script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"></script>
   <script src="https://cdn.jsdelivr.net/npm/papaparse@5.4.1/papaparse.min.js"></script>
-  <script src="https://unpkg.com/chroma-js"></script>
+  <script src="https://cdnjs.cloudflare.com/ajax/libs/chroma-js/2.1.0/chroma.min.js"></script>
 
   <script>
     const map = L.map('map').setView([40.85, -73.4], 12);
@@ -90,7 +90,7 @@
           if (p.candidateA_name && p.candidateB_name && p.candidateA_votes && p.candidateB_votes) {
             layer.bindPopup(drawPopup(p));
           } else {
-            layer.bindPopup(\`<strong>Election District:</strong> \${p.NAME}\`);
+            layer.bindPopup(`<strong>Election District:</strong> ${p.NAME}`);
           }
         }
       }).addTo(map);
