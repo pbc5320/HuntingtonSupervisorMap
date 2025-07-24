@@ -18,6 +18,14 @@
       border-radius: 5px;
       box-shadow: 0 0 5px rgba(0,0,0,0.3);
     }
+    .ed-label {
+      font-size: 12px;
+      font-weight: bold;
+      color: black;
+      text-align: center;
+      white-space: nowrap;
+      text-shadow: 0 0 3px white;
+    }
   </style>
 </head>
 <body>
@@ -30,6 +38,7 @@
   <script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"></script>
   <script src="https://cdn.jsdelivr.net/npm/papaparse@5.4.1/papaparse.min.js"></script>
   <script src="https://cdnjs.cloudflare.com/ajax/libs/chroma-js/2.1.0/chroma.min.js"></script>
+  <script src="https://cdn.jsdelivr.net/npm/@turf/turf@6.5.0/turf.min.js"></script>
 
   <script>
     const map = L.map('map').setView([40.85, -73.4], 12);
@@ -42,30 +51,28 @@
     let geojsonLayer;
 
     function getColor(value) {
-      // Custom dark blue to white to deep red gradient
-      return chroma.scale(['#1a237e', '#ffffff', '#b71c1c']) // deep blue to white to deep red
-        .domain([-1, 0, 1])(value)
-        .hex();
+      return chroma.scale(['#001f3f', 'white', '#8B0000']).domain([-1, 0, 1])(value).hex();
     }
+
+    const fieldsToExclude = new Set([
+      'OBJECTID', 'COUNTY', 'LASTUPDATE', 'POLLINGID', 'Shape_Length', 'Shape_Area'
+    ]);
 
     function drawPopup(props) {
       const name = props.NAME ?? "Unnamed District";
+      let html = `<strong>Election District:</strong> ${name}<br><br>`;
 
-      const excludeKeys = new Set([
-        "OBJECTID", "COUNTY", "LASTUPDATE", "POLLINGID", "Shape_Length", "Shape_Area", "TD"
-      ]);
-
-      const content = Object.entries(props)
-        .filter(([key]) => !excludeKeys.has(key))
-        .map(([key, value]) => {
-          if (key.toLowerCase().includes("percent") && typeof value === "number") {
-            return `<b>${key}:</b> ${value}%`;
+      Object.entries(props).forEach(([key, value]) => {
+        if (!fieldsToExclude.has(key)) {
+          if (key.includes("percent") && typeof value === "number") {
+            html += `<b>${key}:</b> ${value}%<br>`;
+          } else {
+            html += `<b>${key}:</b> ${value ?? "N/A"}<br>`;
           }
-          return `<b>${key}:</b> ${value ?? "N/A"}`;
-        })
-        .join("<br>");
+        }
+      });
 
-      return `<strong>Election District:</strong> ${name}<br><br>${content}`;
+      return html;
     }
 
     function loadGeoJSON(data, csvData = null) {
@@ -96,12 +103,24 @@
             fillColor: getColor(norm),
             color: "#333",
             weight: 1,
-            fillOpacity: 0.9
+            fillOpacity: 0.75
           };
         },
         onEachFeature: function (feature, layer) {
           const p = feature.properties;
           layer.bindPopup(drawPopup(p));
+
+          const center = turf.centroid(feature).geometry.coordinates;
+          const label = L.marker([center[1], center[0]], {
+            icon: L.divIcon({
+              className: 'ed-label',
+              html: `<div>${p.ED_Number ?? ""}</div>`,
+              iconSize: [40, 20],
+              iconAnchor: [20, 10]
+            }),
+            interactive: false
+          });
+          label.addTo(map);
         }
       }).addTo(map);
     }
