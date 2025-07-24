@@ -46,12 +46,12 @@
     }
 
     function drawPopup(props) {
-      return \`
-        <strong>Election District:</strong> \${props.NAME}<br><br>
-        <strong>\${props.candidateA_name}:</strong> \${props.candidateA_percent}% (\${props.candidateA_votes} votes)<br>
-        <strong>\${props.candidateB_name}:</strong> \${props.candidateB_percent}% (\${props.candidateB_votes} votes)<br>
-        <strong>Margin:</strong> \${props.percent_difference}%
-      \`;
+      return `
+        <strong>Election District:</strong> ${props.NAME}<br><br>
+        <strong>${props.candidateA_name}:</strong> ${props.candidateA_percent}% (${props.candidateA_votes} votes)<br>
+        <strong>${props.candidateB_name}:</strong> ${props.candidateB_percent}% (${props.candidateB_votes} votes)<br>
+        <strong>Margin:</strong> ${props.percent_difference}%
+      `;
     }
 
     function loadGeoJSON(data, csvData = null) {
