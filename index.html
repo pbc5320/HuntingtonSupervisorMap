@@ -77,32 +77,36 @@
     ]);
 
     function drawPopup(props) {
-      const name = props.NAME ?? `ED ${props.ED_Number ?? props.ED ?? ''}`;
-      let html = `<div style="min-width:260px">`;
-      html += `<div><strong>Election District:</strong> ${name}</div>`;
+       const name = props.NAME ?? `ED ${props.ED_Number ?? props.ED ?? ''}`;
+  let html = `<div style="min-width:260px">`;
+  html += `<div><strong>Election District:</strong> ${name}</div>`;
 
-      // Committee Members block (multiline)
-      const members = props['Committee Members'];
-      if (members && String(members).trim() !== '') {
-        html += `<hr><div><strong>Committee Members</strong><br>${nl2br(members)}</div>`;
-      }
+  // Zone block
+  if (props.Zone && String(props.Zone).trim() !== '') {
+    html += `<div><strong>Zone:</strong> ${props.Zone}</div>`;
+  }
 
-      // Generic dump of remaining properties (skip excluded + internal)
-      html += `<hr><table class="tbl">`;
-      // Sort keys for a stable order
-      const entries = Object.entries(props).sort(([a],[b]) => a.localeCompare(b));
-      for (const [key, value] of entries) {
-        if (fieldsToExclude.has(key)) continue;
-        if (key === 'NAME' || key === 'ED_Number' || key === 'ED') continue; // already shown in title
-        let val = value ?? 'N/A';
-        const kl = key.toLowerCase();
-        if (kl.includes('percent')) {
-          val = fmtPctSmart(value);
-        }
-        html += `<tr><td><b>${key}</b></td><td style="text-align:right">${val}</td></tr>`;
-      }
-      html += `</table></div>`;
-      return html;
+  // Committee Members block (multiline)
+  const members = props['Committee Members'];
+  if (members && String(members).trim() !== '') {
+    html += `<hr><div><strong>Committee Members</strong><br>${nl2br(members)}</div>`;
+  }
+
+  // Generic dump of remaining properties (skip excluded + internal)
+  html += `<hr><table class="tbl">`;
+  const entries = Object.entries(props).sort(([a],[b]) => a.localeCompare(b));
+  for (const [key, value] of entries) {
+    if (fieldsToExclude.has(key)) continue;
+    if (['NAME','ED_Number','ED','Zone'].includes(key)) continue; // already shown
+    let val = value ?? 'N/A';
+    const kl = key.toLowerCase();
+    if (kl.includes('percent')) {
+      val = fmtPctSmart(value);
+    }
+    html += `<tr><td><b>${key}</b></td><td style="text-align:right">${val}</td></tr>`;
+  }
+  html += `</table></div>`;
+  return html;
     }
 
     function loadGeoJSON(data, csvData = null) {
