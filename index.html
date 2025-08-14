@@ -17,6 +17,8 @@
       z-index: 1000;
       border-radius: 5px;
       box-shadow: 0 0 5px rgba(0,0,0,0.3);
+      font-family: system-ui, -apple-system, Segoe UI, Roboto, Arial, sans-serif;
+      max-width: 360px;
     }
     .ed-label {
       font-size: 12px;
@@ -26,11 +28,13 @@
       white-space: nowrap;
       text-shadow: 0 0 3px white;
     }
+    .tbl { border-collapse: collapse; width: 100%; font-size: 12px; }
+    .tbl td { padding: 2px 4px; border-bottom: 1px solid #eee; }
   </style>
 </head>
 <body>
   <div id="uploadBox">
-    <label for="csvFile">Upload new CSV:</label>
+    <label for="csvFile"><b>Upload new CSV</b> (must include a “Committee Members” column)</label><br>
     <input type="file" id="csvFile" accept=".csv" />
   </div>
   <div id="map"></div>
@@ -51,27 +55,53 @@
     let geojsonLayer;
 
     function getColor(value) {
+      // value is expected in [-1, 1]
       return chroma.scale(['#001f3f', 'white', '#8B0000']).domain([-1, 0, 1])(value).hex();
     }
 
+    // helpers
+    const nl2br = s => String(s ?? '').replace(/\r?\n/g, '<br>');
+    function fmtPctSmart(v) {
+      if (v == null) return '—';
+      const s = String(v).trim();
+      if (s === '') return '—';
+      if (s.endsWith('%')) return s; // already formatted
+      const n = Number(s.replace(/[, ]/g,''));
+      if (!Number.isFinite(n)) return s; // show raw if not a number
+      return `${n.toFixed(1)}%`;
+    }
+
     const fieldsToExclude = new Set([
-      'OBJECTID', 'COUNTY', 'LASTUPDATE', 'POLLINGID', 'Shape_Length', 'Shape_Area'
+      'OBJECTID', 'COUNTY', 'LASTUPDATE', 'POLLINGID', 'Shape_Length', 'Shape_Area',
+      'Committee Members' // we render this separately
     ]);
 
     function drawPopup(props) {
-      const name = props.NAME ?? "Unnamed District";
-      let html = `<strong>Election District:</strong> ${name}<br><br>`;
+      const name = props.NAME ?? `ED ${props.ED_Number ?? props.ED ?? ''}`;
+      let html = `<div style="min-width:260px">`;
+      html += `<div><strong>Election District:</strong> ${name}</div>`;
 
-      Object.entries(props).forEach(([key, value]) => {
-        if (!fieldsToExclude.has(key)) {
-          if (key.includes("percent") && typeof value === "number") {
-            html += `<b>${key}:</b> ${value}%<br>`;
-          } else {
-            html += `<b>${key}:</b> ${value ?? "N/A"}<br>`;
-          }
+      // Committee Members block (multiline)
+      const members = props['Committee Members'];
+      if (members && String(members).trim() !== '') {
+        html += `<hr><div><strong>Committee Members</strong><br>${nl2br(members)}</div>`;
+      }
+
+      // Generic dump of remaining properties (skip excluded + internal)
+      html += `<hr><table class="tbl">`;
+      // Sort keys for a stable order
+      const entries = Object.entries(props).sort(([a],[b]) => a.localeCompare(b));
+      for (const [key, value] of entries) {
+        if (fieldsToExclude.has(key)) continue;
+        if (key === 'NAME' || key === 'ED_Number' || key === 'ED') continue; // already shown in title
+        let val = value ?? 'N/A';
+        const kl = key.toLowerCase();
+        if (kl.includes('percent')) {
+          val = fmtPctSmart(value);
         }
-      });
-
+        html += `<tr><td><b>${key}</b></td><td style="text-align:right">${val}</td></tr>`;
+      }
+      html += `</table></div>`;
       return html;
     }
 
@@ -80,68 +110,81 @@
         map.removeLayer(geojsonLayer);
       }
 
+      // Build lookup from CSV by PRECINCTID or PRECINCT_ID
       const csvMap = new Map();
       if (csvData) {
         csvData.forEach(row => {
-          csvMap.set(String(row["PRECINCTID"]), row);
+          if (!row) return;
+          const k = row["PRECINCTID"] ?? row["PRECINCT_ID"];
+          if (k != null) csvMap.set(String(k).trim(), row);
         });
       }
 
+      // Merge CSV rows into features
       data.features.forEach(f => {
-        const precinct = String(f.properties.PRECINCTID);
-        const row = csvMap.get(precinct);
+        const props = f.properties || {};
+        const precinctKey =
+          (props.PRECINCTID != null ? String(props.PRECINCTID).trim() : null) ||
+          (props.PRECINCT_ID != null ? String(props.PRECINCT_ID).trim() : null);
+        const row = precinctKey ? csvMap.get(precinctKey) : null;
         if (row) {
-          f.properties = { ...f.properties, ...row };
+          f.properties = { ...props, ...row };
         }
       });
 
       geojsonLayer = L.geoJSON(data, {
         style: function (feature) {
-          const margin = feature.properties.percent_difference;
-          const norm = isNaN(margin) ? 0 : margin / 100;
+          // color by percent_difference already in your GeoJSON / merged props
+          const margin = Number(feature.properties.percent_difference);
+          const norm = (isNaN(margin) ? 0 : margin / 100);
           return {
             fillColor: getColor(norm),
             color: "#333",
             weight: 1,
-            fillOpacity: 0.75
+            fillOpacity: 0.85
           };
         },
         onEachFeature: function (feature, layer) {
           const p = feature.properties;
           layer.bindPopup(drawPopup(p));
 
-          const center = turf.centroid(feature).geometry.coordinates;
-          const label = L.marker([center[1], center[0]], {
-            icon: L.divIcon({
-              className: 'ed-label',
-              html: `<div>${p.ED_Number ?? ""}</div>`,
-              iconSize: [40, 20],
-              iconAnchor: [20, 10]
-            }),
-            interactive: false
-          });
-          label.addTo(map);
+          // label at centroid (ED_Number)
+          try {
+            const center = turf.centroid(feature).geometry.coordinates;
+            const label = L.marker([center[1], center[0]], {
+              icon: L.divIcon({
+                className: 'ed-label',
+                html: `<div>${p.ED_Number ?? ""}</div>`,
+                iconSize: [40, 20],
+                iconAnchor: [20, 10]
+              }),
+              interactive: false
+            });
+            label.addTo(map);
+          } catch (e) {}
         }
       }).addTo(map);
     }
 
+    // initial load
     fetch("Election_District.geojson")
       .then(res => res.json())
       .then(data => loadGeoJSON(data));
 
+    // CSV upload
     document.getElementById("csvFile").addEventListener("change", function (e) {
       const file = e.target.files[0];
-      if (file) {
-        Papa.parse(file, {
-          header: true,
-          dynamicTyping: true,
-          complete: function(results) {
-            fetch("Election_District.geojson")
-              .then(res => res.json())
-              .then(data => loadGeoJSON(data, results.data));
-          }
-        });
-      }
+      if (!file) return;
+      Papa.parse(file, {
+        header: true,
+        dynamicTyping: false,
+        skipEmptyLines: 'greedy',
+        complete: function(results) {
+          fetch("Election_District.geojson")
+            .then(res => res.json())
+            .then(data => loadGeoJSON(data, results.data));
+        }
+      });
     });
   </script>
 </body>
