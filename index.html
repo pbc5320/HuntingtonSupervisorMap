@@ -168,26 +168,38 @@
           const p = feature.properties;
           layer.bindPopup(drawPopup(p));
 
-          // label at centroid (ED_Number), styled if monitored
-          try {
-            const center = turf.centroid(feature).geometry.coordinates;
-            const monitored = isMonitored(p);
-            const label = L.marker([center[1], center[0]], {
-              icon: L.divIcon({
-                className: monitored ? 'ed-label ed-label--monitor' : 'ed-label',
-                html: `<div>${p.ED_Number ?? ""}</div>`,
-                iconSize: [40, 20],
-                iconAnchor: [20, 10]
-              }),
-              interactive: false,
-              zIndexOffset: monitored ? 1000 : 0
-            });
-            labelLayer.addLayer(label);
-          } catch (e) {}
-        }
+      onEachFeature: function (feature, layer) {
+  const p = feature.properties;
+  layer.bindPopup(drawPopup(p));
+
+  try {
+    const center = turf.centroid(feature).geometry.coordinates;
+    const edNum = p.ED_Number ?? "";
+
+    // Always add label
+    const labelHTML = `<div>${edNum}</div>`;
+    const label = L.marker([center[1], center[0]], {
+      icon: L.divIcon({
+        className: 'ed-label',
+        html: labelHTML,
+        iconSize: [40, 20],
+        iconAnchor: [20, 10]
+      }),
+      interactive: false
+    }).addTo(map);
+
+    // Add circle ONLY if Monitor column has "X"
+    if ((p.Monitor || "").toString().trim().toUpperCase() === "X") {
+      L.circleMarker([center[1], center[0]], {
+        radius: 14,
+        color: "#ff0000",
+        weight: 2,
+        fillOpacity: 0
       }).addTo(map);
     }
 
+  } catch (e) {}
+}
     // initial load
     fetch("Election_District.geojson")
       .then(res => res.json())
