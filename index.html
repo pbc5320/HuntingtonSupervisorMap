@@ -10,31 +10,36 @@
     #map { width: 100%; height: 100vh; }
     #uploadBox {
       position: absolute;
-      top: 10px;
-      left: 10px;
-      background: white;
-      padding: 10px;
-      z-index: 1000;
-      border-radius: 5px;
-      box-shadow: 0 0 5px rgba(0,0,0,0.3);
+      top: 10px; left: 10px; z-index: 1000;
+      background: white; padding: 10px; border-radius: 8px;
+      box-shadow: 0 2px 10px rgba(0,0,0,.15);
       font-family: system-ui, -apple-system, Segoe UI, Roboto, Arial, sans-serif;
       max-width: 360px;
     }
     .ed-label {
-      font-size: 12px;
-      font-weight: bold;
-      color: black;
-      text-align: center;
-      white-space: nowrap;
-      text-shadow: 0 0 3px white;
+      font-size: 12px; font-weight: 700; color: #000;
+      text-align: center; white-space: nowrap;
+      text-shadow: 0 0 3px #fff;
+      background: rgba(255,255,255,0.8);
+      border-radius: 6px; padding: 2px 6px;
+      box-shadow: 0 0 0 1px rgba(0,0,0,.2);
     }
+    /* Highlighted/monitored badge */
+    .ed-label--monitor {
+      background: #fff7cc;              /* pale yellow */
+      border: 2px solid #222;           /* strong outline */
+      box-shadow: 0 0 0 3px #ffd40066;  /* glow ring */
+      border-radius: 9999px;            /* circular badge */
+      padding: 4px 10px;
+    }
+
     .tbl { border-collapse: collapse; width: 100%; font-size: 12px; }
     .tbl td { padding: 2px 4px; border-bottom: 1px solid #eee; }
   </style>
 </head>
 <body>
   <div id="uploadBox">
-    <label for="csvFile"><b>Upload new CSV</b> (must include a “Committee Members” column)</label><br>
+    <label for="csvFile"><b>Upload new CSV</b> (must include “Committee Members”; optional “Monitor” with <code>x</code>)</label><br>
     <input type="file" id="csvFile" accept=".csv" />
   </div>
   <div id="map"></div>
@@ -53,6 +58,7 @@
     }).addTo(map);
 
     let geojsonLayer;
+    const labelLayer = L.layerGroup().addTo(map);
 
     function getColor(value) {
       // value is expected in [-1, 1]
@@ -73,46 +79,56 @@
 
     const fieldsToExclude = new Set([
       'OBJECTID', 'COUNTY', 'LASTUPDATE', 'POLLINGID', 'Shape_Length', 'Shape_Area',
-      'Committee Members' // we render this separately
+      'Committee Members', // we render this separately
+      'Monitor'            // we use this only for label styling
     ]);
 
     function drawPopup(props) {
-       const name = props.NAME ?? `ED ${props.ED_Number ?? props.ED ?? ''}`;
-  let html = `<div style="min-width:260px">`;
-  html += `<div><strong>Election District:</strong> ${name}</div>`;
+      const name = props.NAME ?? `ED ${props.ED_Number ?? props.ED ?? ''}`;
+      let html = `<div style="min-width:260px">`;
+      html += `<div><strong>Election District:</strong> ${name}</div>`;
 
-  // Zone block
-  if (props.Zone && String(props.Zone).trim() !== '') {
-    html += `<div><strong>Zone:</strong> ${props.Zone}</div>`;
-  }
+      // Zone
+      if (props.Zone && String(props.Zone).trim() !== '') {
+        html += `<div><strong>Zone:</strong> ${props.Zone}</div>`;
+      }
 
-  // Committee Members block (multiline)
-  const members = props['Committee Members'];
-  if (members && String(members).trim() !== '') {
-    html += `<hr><div><strong>Committee Members</strong><br>${nl2br(members)}</div>`;
-  }
+      // Committee Members block (multiline)
+      const members = props['Committee Members'];
+      if (members && String(members).trim() !== '') {
+        html += `<hr><div><strong>Committee Members</strong><br>${nl2br(members)}</div>`;
+      }
 
-  // Generic dump of remaining properties (skip excluded + internal)
-  html += `<hr><table class="tbl">`;
-  const entries = Object.entries(props).sort(([a],[b]) => a.localeCompare(b));
-  for (const [key, value] of entries) {
-    if (fieldsToExclude.has(key)) continue;
-    if (['NAME','ED_Number','ED','Zone'].includes(key)) continue; // already shown
-    let val = value ?? 'N/A';
-    const kl = key.toLowerCase();
-    if (kl.includes('percent')) {
-      val = fmtPctSmart(value);
+      // Generic dump of remaining properties (skip excluded + internal)
+      html += `<hr><table class="tbl">`;
+      const entries = Object.entries(props).sort(([a],[b]) => a.localeCompare(b));
+      for (const [key, value] of entries) {
+        if (fieldsToExclude.has(key)) continue;
+        if (key === 'NAME' || key === 'ED_Number' || key === 'ED' || key === 'Zone') continue; // already shown in header
+        let val = value ?? 'N/A';
+        const kl = key.toLowerCase();
+        if (kl.includes('percent')) {
+          val = fmtPctSmart(value);
+        }
+        html += `<tr><td><b>${key}</b></td><td style="text-align:right">${val}</td></tr>`;
+      }
+      html += `</table></div>`;
+      return html;
     }
-    html += `<tr><td><b>${key}</b></td><td style="text-align:right">${val}</td></tr>`;
-  }
-  html += `</table></div>`;
-  return html;
+
+    function isMonitored(props) {
+      // Treat any case-insensitive "x" (or "X") as true; also accept boolean true
+      const raw = props.Monitor ?? props.MONITOR ?? props.monitor;
+      if (raw === true) return true;
+      if (raw == null) return false;
+      return String(raw).trim().toLowerCase() === 'x';
     }
 
     function loadGeoJSON(data, csvData = null) {
       if (geojsonLayer) {
         map.removeLayer(geojsonLayer);
       }
+      labelLayer.clearLayers();
 
       // Build lookup from CSV by PRECINCTID or PRECINCT_ID
       const csvMap = new Map();
@@ -152,19 +168,21 @@
           const p = feature.properties;
           layer.bindPopup(drawPopup(p));
 
-          // label at centroid (ED_Number)
+          // label at centroid (ED_Number), styled if monitored
           try {
             const center = turf.centroid(feature).geometry.coordinates;
+            const monitored = isMonitored(p);
             const label = L.marker([center[1], center[0]], {
               icon: L.divIcon({
-                className: 'ed-label',
+                className: monitored ? 'ed-label ed-label--monitor' : 'ed-label',
                 html: `<div>${p.ED_Number ?? ""}</div>`,
                 iconSize: [40, 20],
                 iconAnchor: [20, 10]
               }),
-              interactive: false
+              interactive: false,
+              zIndexOffset: monitored ? 1000 : 0
             });
-            label.addTo(map);
+            labelLayer.addLayer(label);
           } catch (e) {}
         }
       }).addTo(map);
