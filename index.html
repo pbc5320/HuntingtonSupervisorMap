@@ -23,8 +23,8 @@
       text-shadow: 0 0 3px #fff;
   
     }
-    /* Circular badge for monitored districts (used only when Monitor = X) */
-    .ed-label--monitor {
+    /* Circular badge for highlighted districts (used only when Highlight = X) */
+    .ed-label--highlight {
       background: #ffffff;
       border: 3px solid #e02424;
       border-radius: 50%;
@@ -42,7 +42,7 @@
 </head>
 <body>
   <div id="uploadBox">
-    <label for="csvFile"><b>Upload new CSV</b> (must include “Committee Members”; optional “Monitor” with <code>X</code>)</label><br>
+    <label for="csvFile"><b>Upload new CSV</b> (must include “Committee Members”; optional “Highlight” with <code>X</code>)</label><br>
     <input type="file" id="csvFile" accept=".csv" />
   </div>
   <div id="map"></div>
@@ -81,7 +81,7 @@
     const fieldsToExclude = new Set([
       'OBJECTID', 'COUNTY', 'LASTUPDATE', 'POLLINGID', 'Shape_Length', 'Shape_Area',
       'Committee Members', // rendered separately
-      'Monitor'            // used only for label styling
+      'Highlight'            // used only for label styling
     ]);
 
     function drawPopup(props) {
@@ -109,7 +109,7 @@
     }
 
     function isMonitored(props) {
-      const raw = props.Monitor ?? props.MONITOR ?? props.monitor;
+      const raw = props.Highlight ?? props.HIGHLIGHT ?? props.highlight;
       if (raw == null) return false;
       return String(raw).trim().toUpperCase() === 'X';
     }
@@ -159,7 +159,7 @@
             const edText = p.ED_Number ?? "";
 
             // Base label shown for ALL EDs
-            const labelClass = isMonitored(p) ? 'ed-label ed-label--monitor' : 'ed-label';
+            const labelClass = isMonitored(p) ? 'ed-label ed-label--highlight' : 'ed-label';
             const iconSize = isMonitored(p) ? [28, 28] : [40, 20];
             const iconAnchor = isMonitored(p) ? [14, 14] : [20, 10];
 
