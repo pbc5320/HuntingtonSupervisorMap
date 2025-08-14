@@ -16,30 +16,35 @@
       font-family: system-ui, -apple-system, Segoe UI, Roboto, Arial, sans-serif;
       max-width: 360px;
     }
+    /* Base ED label */
     .ed-label {
       font-size: 12px; font-weight: 700; color: #000;
       text-align: center; white-space: nowrap;
       text-shadow: 0 0 3px #fff;
-      background: rgba(255,255,255,0.8);
+      background: rgba(255,255,255,0.9);
       border-radius: 6px; padding: 2px 6px;
       box-shadow: 0 0 0 1px rgba(0,0,0,.2);
     }
-    /* Highlighted/monitored badge */
+    /* Circular badge for monitored districts (used only when Monitor = X) */
     .ed-label--monitor {
-      background: #fff7cc;              /* pale yellow */
-      border: 2px solid #222;           /* strong outline */
-      box-shadow: 0 0 0 3px #ffd40066;  /* glow ring */
-      border-radius: 9999px;            /* circular badge */
-      padding: 4px 10px;
+      background: #ffffff;
+      border: 3px solid #e02424;
+      border-radius: 50%;
+      width: 28px; height: 28px;
+      display: flex; align-items: center; justify-content: center;
+      padding: 0;
+      box-shadow: 0 0 6px rgba(0,0,0,0.45);
+      font-weight: 800;
+      font-size: 12px;
+      line-height: 1;
     }
-
     .tbl { border-collapse: collapse; width: 100%; font-size: 12px; }
     .tbl td { padding: 2px 4px; border-bottom: 1px solid #eee; }
   </style>
 </head>
 <body>
   <div id="uploadBox">
-    <label for="csvFile"><b>Upload new CSV</b> (must include “Committee Members”; optional “Monitor” with <code>x</code>)</label><br>
+    <label for="csvFile"><b>Upload new CSV</b> (must include “Committee Members”; optional “Monitor” with <code>X</code>)</label><br>
     <input type="file" id="csvFile" accept=".csv" />
   </div>
   <div id="map"></div>
@@ -51,17 +56,15 @@
 
   <script>
     const map = L.map('map').setView([40.85, -73.4], 12);
-
     L.tileLayer("https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png", {
-      maxZoom: 19,
-      attribution: '&copy; OpenStreetMap contributors'
+      maxZoom: 19, attribution: '&copy; OpenStreetMap contributors'
     }).addTo(map);
 
     let geojsonLayer;
     const labelLayer = L.layerGroup().addTo(map);
 
     function getColor(value) {
-      // value is expected in [-1, 1]
+      // value in [-1, 1]
       return chroma.scale(['#001f3f', 'white', '#8B0000']).domain([-1, 0, 1])(value).hex();
     }
 
@@ -71,45 +74,36 @@
       if (v == null) return '—';
       const s = String(v).trim();
       if (s === '') return '—';
-      if (s.endsWith('%')) return s; // already formatted
+      if (s.endsWith('%')) return s;
       const n = Number(s.replace(/[, ]/g,''));
-      if (!Number.isFinite(n)) return s; // show raw if not a number
+      if (!Number.isFinite(n)) return s;
       return `${n.toFixed(1)}%`;
     }
 
     const fieldsToExclude = new Set([
       'OBJECTID', 'COUNTY', 'LASTUPDATE', 'POLLINGID', 'Shape_Length', 'Shape_Area',
-      'Committee Members', // we render this separately
-      'Monitor'            // we use this only for label styling
+      'Committee Members', // rendered separately
+      'Monitor'            // used only for label styling
     ]);
 
     function drawPopup(props) {
       const name = props.NAME ?? `ED ${props.ED_Number ?? props.ED ?? ''}`;
       let html = `<div style="min-width:260px">`;
       html += `<div><strong>Election District:</strong> ${name}</div>`;
-
-      // Zone
       if (props.Zone && String(props.Zone).trim() !== '') {
         html += `<div><strong>Zone:</strong> ${props.Zone}</div>`;
       }
-
-      // Committee Members block (multiline)
       const members = props['Committee Members'];
       if (members && String(members).trim() !== '') {
         html += `<hr><div><strong>Committee Members</strong><br>${nl2br(members)}</div>`;
       }
-
-      // Generic dump of remaining properties (skip excluded + internal)
       html += `<hr><table class="tbl">`;
       const entries = Object.entries(props).sort(([a],[b]) => a.localeCompare(b));
       for (const [key, value] of entries) {
         if (fieldsToExclude.has(key)) continue;
-        if (key === 'NAME' || key === 'ED_Number' || key === 'ED' || key === 'Zone') continue; // already shown in header
+        if (['NAME','ED_Number','ED','Zone'].includes(key)) continue;
         let val = value ?? 'N/A';
-        const kl = key.toLowerCase();
-        if (kl.includes('percent')) {
-          val = fmtPctSmart(value);
-        }
+        if (key.toLowerCase().includes('percent')) val = fmtPctSmart(value);
         html += `<tr><td><b>${key}</b></td><td style="text-align:right">${val}</td></tr>`;
       }
       html += `</table></div>`;
@@ -117,17 +111,13 @@
     }
 
     function isMonitored(props) {
-      // Treat any case-insensitive "x" (or "X") as true; also accept boolean true
       const raw = props.Monitor ?? props.MONITOR ?? props.monitor;
-      if (raw === true) return true;
       if (raw == null) return false;
-      return String(raw).trim().toLowerCase() === 'x';
+      return String(raw).trim().toUpperCase() === 'X';
     }
 
     function loadGeoJSON(data, csvData = null) {
-      if (geojsonLayer) {
-        map.removeLayer(geojsonLayer);
-      }
+      if (geojsonLayer) map.removeLayer(geojsonLayer);
       labelLayer.clearLayers();
 
       // Build lookup from CSV by PRECINCTID or PRECINCT_ID
@@ -147,9 +137,7 @@
           (props.PRECINCTID != null ? String(props.PRECINCTID).trim() : null) ||
           (props.PRECINCT_ID != null ? String(props.PRECINCT_ID).trim() : null);
         const row = precinctKey ? csvMap.get(precinctKey) : null;
-        if (row) {
-          f.properties = { ...props, ...row };
-        }
+        if (row) f.properties = { ...props, ...row };
       });
 
       geojsonLayer = L.geoJSON(data, {
@@ -168,38 +156,30 @@
           const p = feature.properties;
           layer.bindPopup(drawPopup(p));
 
-      onEachFeature: function (feature, layer) {
-  const p = feature.properties;
-  layer.bindPopup(drawPopup(p));
+          try {
+            const center = turf.centroid(feature).geometry.coordinates;
+            const edText = p.ED_Number ?? "";
 
-  try {
-    const center = turf.centroid(feature).geometry.coordinates;
-    const edNum = p.ED_Number ?? "";
+            // Base label shown for ALL EDs
+            const labelClass = isMonitored(p) ? 'ed-label ed-label--monitor' : 'ed-label';
+            const iconSize = isMonitored(p) ? [28, 28] : [40, 20];
+            const iconAnchor = isMonitored(p) ? [14, 14] : [20, 10];
 
-    // Always add label
-    const labelHTML = `<div>${edNum}</div>`;
-    const label = L.marker([center[1], center[0]], {
-      icon: L.divIcon({
-        className: 'ed-label',
-        html: labelHTML,
-        iconSize: [40, 20],
-        iconAnchor: [20, 10]
-      }),
-      interactive: false
-    }).addTo(map);
-
-    // Add circle ONLY if Monitor column has "X"
-    if ((p.Monitor || "").toString().trim().toUpperCase() === "X") {
-      L.circleMarker([center[1], center[0]], {
-        radius: 14,
-        color: "#ff0000",
-        weight: 2,
-        fillOpacity: 0
+            const label = L.marker([center[1], center[0]], {
+              icon: L.divIcon({
+                className: labelClass,
+                html: `<div>${edText}</div>`,
+                iconSize: iconSize,
+                iconAnchor: iconAnchor
+              }),
+              interactive: false
+            });
+            labelLayer.addLayer(label);
+          } catch (e) { /* ignore bad geometry */ }
+        }
       }).addTo(map);
     }
 
-  } catch (e) {}
-}
     // initial load
     fetch("Election_District.geojson")
       .then(res => res.json())
