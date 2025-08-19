@@ -59,7 +59,9 @@
     const labelLayer = L.layerGroup().addTo(map);
 
     function getColor(value) {
-      return chroma.scale(['#001f3f', 'white', '#8B0000']).domain([-1, 0, 1])(value).hex();
+      if (isNaN(value)) return '#ccc';
+      const scaled = (value - 50) / 50;  // maps 0–100% GOP vote to -1 to +1
+      return chroma.scale(['#001f3f', 'white', '#8B0000']).domain([-1, 0, 1])(scaled).hex();
     }
 
     const nl2br = s => String(s ?? '').replace(/\r?\n/g, '<br>');
@@ -107,8 +109,7 @@
 
     function isMonitored(props) {
       const raw = props.Highlight ?? props.HIGHLIGHT ?? props.highlight;
-      if (raw == null) return false;
-      return String(raw).trim().toUpperCase() === 'X';
+      return String(raw ?? '').trim().toUpperCase() === 'X';
     }
 
     function loadGeoJSON(data, csvData = null) {
@@ -135,10 +136,15 @@
 
       geojsonLayer = L.geoJSON(data, {
         style: function (feature) {
-          const margin = Number(feature.properties['Percent Difference']);
-          const norm = isNaN(margin) ? 0 : margin / 100;
+          const raw = feature.properties['GOP Candidate Percent'];
+          let parsed = 0;
+          if (typeof raw === 'string' && raw.trim().endsWith('%')) {
+            parsed = parseFloat(raw.trim().replace('%', ''));
+          } else {
+            parsed = Number(raw);
+          }
           return {
-            fillColor: getColor(norm),
+            fillColor: getColor(parsed),
             color: "#333",
             weight: 1,
             fillOpacity: 0.85
@@ -151,7 +157,6 @@
           try {
             const center = turf.centroid(feature).geometry.coordinates;
             const edText = p.ED ?? p['ED Number'] ?? '';
-
             const labelClass = isMonitored(p) ? 'ed-label ed-label--highlight' : 'ed-label';
             const iconSize = isMonitored(p) ? [28, 28] : [40, 20];
             const iconAnchor = isMonitored(p) ? [14, 14] : [20, 10];
@@ -166,7 +171,7 @@
               interactive: false
             });
             labelLayer.addLayer(label);
-          } catch (e) { }
+          } catch (e) {}
         }
       }).addTo(map);
     }
