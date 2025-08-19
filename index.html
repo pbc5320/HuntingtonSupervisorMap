@@ -16,14 +16,11 @@
       font-family: system-ui, -apple-system, Segoe UI, Roboto, Arial, sans-serif;
       max-width: 360px;
     }
-    /* Base ED label */
     .ed-label {
       font-size: 12px; font-weight: 700; color: #000;
       text-align: center; white-space: nowrap;
       text-shadow: 0 0 3px #fff;
-  
     }
-    /* Circular badge for highlighted districts (used only when Highlight = X) */
     .ed-label--highlight {
       background: #ffffff;
       border: 3px solid #e02424;
@@ -42,7 +39,7 @@
 </head>
 <body>
   <div id="uploadBox">
-    <label for="csvFile"><b>Upload new CSV</b> (must include “Committee Members”; optional “Highlight” with <code>X</code>)</label><br>
+    <label for="csvFile"><b>Upload new CSV</b> (must include “Committee Members”; optional “HIGHLIGHT” with <code>X</code>)</label><br>
     <input type="file" id="csvFile" accept=".csv" />
   </div>
   <div id="map"></div>
@@ -62,30 +59,27 @@
     const labelLayer = L.layerGroup().addTo(map);
 
     function getColor(value) {
-      // value in [-1, 1]
       return chroma.scale(['#001f3f', 'white', '#8B0000']).domain([-1, 0, 1])(value).hex();
     }
 
-    // helpers
     const nl2br = s => String(s ?? '').replace(/\r?\n/g, '<br>');
     function fmtPctSmart(v) {
       if (v == null) return '—';
       const s = String(v).trim();
       if (s === '') return '—';
       if (s.endsWith('%')) return s;
-      const n = Number(s.replace(/[, ]/g,''));
+      const n = Number(s.replace(/[, ]/g, ''));
       if (!Number.isFinite(n)) return s;
       return `${n.toFixed(1)}%`;
     }
 
     const fieldsToExclude = new Set([
       'OBJECTID', 'COUNTY', 'LASTUPDATE', 'POLLINGID', 'Shape_Length', 'Shape_Area',
-      'Committee Members', // rendered separately
-      'Highlight'            // used only for label styling
+      'Committee Members', 'Highlight', 'HIGHLIGHT'
     ]);
 
     function drawPopup(props) {
-      const name = props.NAME ?? `ED ${props.ED_Number ?? props.ED ?? ''}`;
+      const name = props.NAME ?? `ED ${props["ED Number"] ?? props.ED ?? ''}`;
       let html = `<div style="min-width:260px">`;
       html += `<div><strong>Election District:</strong> ${name}</div>`;
       if (props.Zone && String(props.Zone).trim() !== '') {
@@ -99,7 +93,7 @@
       const entries = Object.entries(props).sort(([a],[b]) => a.localeCompare(b));
       for (const [key, value] of entries) {
         if (fieldsToExclude.has(key)) continue;
-        if (['NAME','ED_Number','ED','Zone'].includes(key)) continue;
+        if (['NAME','ED Number','ED','Zone'].includes(key)) continue;
         let val = value ?? 'N/A';
         if (key.toLowerCase().includes('percent')) val = fmtPctSmart(value);
         html += `<tr><td><b>${key}</b></td><td style="text-align:right">${val}</td></tr>`;
@@ -109,26 +103,26 @@
     }
 
     function isMonitored(props) {
-      const raw = props.Highlight ?? props.HIGHLIGHT ?? props.highlight;
-      if (raw == null) return false;
-      return String(raw).trim().toUpperCase() === 'X';
+      const raw = props.HIGHLIGHT ?? props.Highlight ?? props.highlight;
+      return String(raw ?? '').trim().toUpperCase() === 'X';
     }
 
     function loadGeoJSON(data, csvData = null) {
       if (geojsonLayer) map.removeLayer(geojsonLayer);
       labelLayer.clearLayers();
 
-      // Build lookup from CSV by PRECINCTID or PRECINCT_ID
       const csvMap = new Map();
       if (csvData) {
         csvData.forEach(row => {
-          if (!row) return;
-          const k = row["PRECINCTID"] ?? row["PRECINCT_ID"];
-          if (k != null) csvMap.set(String(k).trim(), row);
+          const cleaned = {};
+          for (const [key, value] of Object.entries(row)) {
+            cleaned[key.trim()] = value;
+          }
+          const k = cleaned["PRECINCTID"] ?? cleaned["PRECINCT_ID"];
+          if (k != null) csvMap.set(String(k).trim(), cleaned);
         });
       }
 
-      // Merge CSV rows into features
       data.features.forEach(f => {
         const props = f.properties || {};
         const precinctKey =
@@ -140,9 +134,9 @@
 
       geojsonLayer = L.geoJSON(data, {
         style: function (feature) {
-          // color by percent_difference already in your GeoJSON / merged props
-          const margin = Number(feature.properties.percent_difference);
-          const norm = (isNaN(margin) ? 0 : margin / 100);
+          const raw = feature.properties["Percent Difference"] ?? feature.properties["percent_difference"];
+          const margin = Number(raw);
+          const norm = isNaN(margin) ? 0 : margin / 100;
           return {
             fillColor: getColor(norm),
             color: "#333",
@@ -156,9 +150,8 @@
 
           try {
             const center = turf.centroid(feature).geometry.coordinates;
-            const edText = p.ED_Number ?? "";
+            const edText = p["ED Number"] ?? p.ED_Number ?? "";
 
-            // Base label shown for ALL EDs
             const labelClass = isMonitored(p) ? 'ed-label ed-label--highlight' : 'ed-label';
             const iconSize = isMonitored(p) ? [28, 28] : [40, 20];
             const iconAnchor = isMonitored(p) ? [14, 14] : [20, 10];
@@ -178,7 +171,7 @@
       }).addTo(map);
     }
 
-    // initial load
+    // Initial load
     fetch("Election_District.geojson")
       .then(res => res.json())
       .then(data => loadGeoJSON(data));
