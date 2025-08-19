@@ -39,7 +39,7 @@
 </head>
 <body>
   <div id="uploadBox">
-    <label for="csvFile"><b>Upload new CSV</b> (must include “Committee Members”; optional “HIGHLIGHT” with <code>X</code>)</label><br>
+    <label for="csvFile"><b>Upload CSV</b></label><br>
     <input type="file" id="csvFile" accept=".csv" />
   </div>
   <div id="map"></div>
@@ -63,6 +63,7 @@
     }
 
     const nl2br = s => String(s ?? '').replace(/\r?\n/g, '<br>');
+
     function fmtPctSmart(v) {
       if (v == null) return '—';
       const s = String(v).trim();
@@ -70,32 +71,34 @@
       if (s.endsWith('%')) return s;
       const n = Number(s.replace(/[, ]/g, ''));
       if (!Number.isFinite(n)) return s;
-      return `${n.toFixed(1)}%`;
+      return `${n.toFixed(2)}%`;
     }
 
-    const fieldsToExclude = new Set([
-      'OBJECTID', 'COUNTY', 'LASTUPDATE', 'POLLINGID', 'Shape_Length', 'Shape_Area',
-      'Committee Members', 'Highlight', 'HIGHLIGHT'
-    ]);
-
     function drawPopup(props) {
-      const name = props.NAME ?? `ED ${props["ED Number"] ?? props.ED ?? ''}`;
+      const name = props.ED ?? props['ED Number'] ?? props.NAME ?? '';
       let html = `<div style="min-width:260px">`;
       html += `<div><strong>Election District:</strong> ${name}</div>`;
-      if (props.Zone && String(props.Zone).trim() !== '') {
-        html += `<div><strong>Zone:</strong> ${props.Zone}</div>`;
-      }
+
       const members = props['Committee Members'];
       if (members && String(members).trim() !== '') {
         html += `<hr><div><strong>Committee Members</strong><br>${nl2br(members)}</div>`;
       }
+
+      const orderedKeys = [
+        'AD', 'SD', 'TD', 'CD', 'LD',
+        'GOP Candidate Votes',
+        'Opposition Candidate Vote',
+        'GOP Candidate Percent',
+        'Opposition Candidate Percent',
+        'Percent Difference',
+        'Total Votes'
+      ];
+
       html += `<hr><table class="tbl">`;
-      const entries = Object.entries(props).sort(([a],[b]) => a.localeCompare(b));
-      for (const [key, value] of entries) {
-        if (fieldsToExclude.has(key)) continue;
-        if (['NAME','ED Number','ED','Zone'].includes(key)) continue;
-        let val = value ?? 'N/A';
-        if (key.toLowerCase().includes('percent')) val = fmtPctSmart(value);
+      for (const key of orderedKeys) {
+        if (!props[key]) continue;
+        let val = props[key] ?? 'N/A';
+        if (key.toLowerCase().includes('percent')) val = fmtPctSmart(val);
         html += `<tr><td><b>${key}</b></td><td style="text-align:right">${val}</td></tr>`;
       }
       html += `</table></div>`;
@@ -103,8 +106,9 @@
     }
 
     function isMonitored(props) {
-      const raw = props.HIGHLIGHT ?? props.Highlight ?? props.highlight;
-      return String(raw ?? '').trim().toUpperCase() === 'X';
+      const raw = props.Highlight ?? props.HIGHLIGHT ?? props.highlight;
+      if (raw == null) return false;
+      return String(raw).trim().toUpperCase() === 'X';
     }
 
     function loadGeoJSON(data, csvData = null) {
@@ -114,31 +118,25 @@
       const csvMap = new Map();
       if (csvData) {
         csvData.forEach(row => {
-          const cleaned = {};
-          for (const [key, value] of Object.entries(row)) {
-            cleaned[key.trim()] = value;
-          }
-          const k = cleaned["PRECINCTID"] ?? cleaned["PRECINCT_ID"];
-          if (k != null) csvMap.set(String(k).trim(), cleaned);
+          if (!row) return;
+          const k = row["PRECINCT_ID"] ?? row["PRECINCTID"];
+          if (k != null) csvMap.set(String(k).trim(), row);
         });
       }
 
       data.features.forEach(f => {
         const props = f.properties || {};
         const precinctKey =
-          (props.PRECINCTID != null ? String(props.PRECINCTID).trim() : null) ||
-          (props.PRECINCT_ID != null ? String(props.PRECINCT_ID).trim() : null);
+          (props.PRECINCT_ID != null ? String(props.PRECINCT_ID).trim() : null) ||
+          (props.PRECINCTID != null ? String(props.PRECINCTID).trim() : null);
         const row = precinctKey ? csvMap.get(precinctKey) : null;
         if (row) f.properties = { ...props, ...row };
       });
 
       geojsonLayer = L.geoJSON(data, {
         style: function (feature) {
-          let raw = feature.properties["Percent Difference"];
-          if (typeof raw === 'string' && raw.includes('%')) {
-            raw = parseFloat(raw.replace('%','').trim());
-          }
-          const norm = isNaN(raw) ? 0 : raw / 100;
+          const margin = Number(feature.properties['Percent Difference']);
+          const norm = isNaN(margin) ? 0 : margin / 100;
           return {
             fillColor: getColor(norm),
             color: "#333",
@@ -152,7 +150,7 @@
 
           try {
             const center = turf.centroid(feature).geometry.coordinates;
-            const edText = p["ED Number"] ?? p.ED_Number ?? "";
+            const edText = p.ED ?? p['ED Number'] ?? '';
 
             const labelClass = isMonitored(p) ? 'ed-label ed-label--highlight' : 'ed-label';
             const iconSize = isMonitored(p) ? [28, 28] : [40, 20];
@@ -168,7 +166,7 @@
               interactive: false
             });
             labelLayer.addLayer(label);
-          } catch (e) { /* ignore bad geometry */ }
+          } catch (e) { }
         }
       }).addTo(map);
     }
@@ -185,9 +183,17 @@
         dynamicTyping: false,
         skipEmptyLines: 'greedy',
         complete: function(results) {
+          const cleaned = results.data.map(row => {
+            const fixed = {};
+            for (const [key, val] of Object.entries(row)) {
+              if (!key) continue;
+              fixed[key.trim()] = typeof val === 'string' ? val.trim() : val;
+            }
+            return fixed;
+          });
           fetch("Election_District.geojson")
             .then(res => res.json())
-            .then(data => loadGeoJSON(data, results.data));
+            .then(data => loadGeoJSON(data, cleaned));
         }
       });
     });
