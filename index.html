@@ -134,16 +134,30 @@
 
       geojsonLayer = L.geoJSON(data, {
         style: function (feature) {
-          const raw = feature.properties["Percent Difference"] ?? feature.properties["percent_difference"];
-          const margin = Number(raw);
-          const norm = isNaN(margin) ? 0 : margin / 100;
-          return {
-            fillColor: getColor(norm),
-            color: "#333",
-            weight: 1,
-            fillOpacity: 0.85
-          };
-        },
+  // Robust parsing of "Percentage Difference" column (with or without %)
+  let marginRaw = null;
+  for (const k of Object.keys(feature.properties)) {
+    if (k.trim().toLowerCase().includes("percentage difference")) {
+      marginRaw = feature.properties[k];
+      break;
+    }
+  }
+
+  let margin = 0;
+  if (typeof marginRaw === 'string' && marginRaw.includes('%')) {
+    margin = Number(marginRaw.replace('%', '').trim());
+  } else {
+    margin = Number(marginRaw);
+  }
+  const norm = isNaN(margin) ? 0 : margin / 100;
+
+  return {
+    fillColor: getColor(norm),
+    color: "#333",
+    weight: 1,
+    fillOpacity: 0.85
+  };
+},
         onEachFeature: function (feature, layer) {
           const p = feature.properties;
           layer.bindPopup(drawPopup(p));
