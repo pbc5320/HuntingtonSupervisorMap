@@ -35,12 +35,42 @@
     }
     .tbl { border-collapse: collapse; width: 100%; font-size: 12px; }
     .tbl td { padding: 2px 4px; border-bottom: 1px solid #eee; }
+
+    /* Legend styling */
+    .legend {
+      background: #fff; padding: 8px 10px; line-height: 1.2;
+      color: #111; border-radius: 6px; box-shadow: 0 2px 8px rgba(0,0,0,.15);
+      font: 12px/1.2 system-ui, -apple-system, Segoe UI, Roboto, Arial, sans-serif;
+    }
+    .legend .bar {
+      height: 10px; width: 220px; border-radius: 6px; margin: 6px 0 4px;
+      background: #ccc;
+    }
+    .legend .ticks {
+      display: flex; justify-content: space-between; width: 220px;
+      font-size: 11px; color: #333;
+    }
+    .legend .hdr { font-weight: 700; font-size: 12px; }
+    .legend .note { color:#555; font-size: 10px; margin-top: 2px; }
+    .btn {
+      display:inline-block; margin-top:8px; padding:6px 10px; border-radius:6px;
+      border:1px solid #ddd; cursor:pointer; background:#f7f7f7;
+      font-size:12px; font-weight:600;
+    }
+    .btn:hover { background:#f0f0f0; }
   </style>
 </head>
 <body>
   <div id="uploadBox">
     <label for="csvFile"><b>Upload CSV</b></label><br>
     <input type="file" id="csvFile" accept=".csv" />
+
+    <div style="margin-top:6px">
+      <button id="exportPngBtn" class="btn" title="Download a PNG of the current map view">Export PNG</button>
+      <button id="exportPdfBtn" class="btn" title="Download a high-res PDF of the current map view">Export PDF</button>
+      <button id="exportVectorPdfBtn" class="btn" title="Vector districts only (no basemap/HTML labels)">PDF (Vector Polygons)</button>
+      <button id="exportCsvBtn" class="btn" title="Export the joined properties as CSV">Export Data (CSV)</button>
+    </div>
   </div>
   <div id="map"></div>
 
@@ -48,6 +78,11 @@
   <script src="https://cdn.jsdelivr.net/npm/papaparse@5.4.1/papaparse.min.js"></script>
   <script src="https://cdnjs.cloudflare.com/ajax/libs/chroma-js/2.1.0/chroma.min.js"></script>
   <script src="https://cdn.jsdelivr.net/npm/@turf/turf@6.5.0/turf.min.js"></script>
+  <!-- html2canvas for raster PNG/PDF export -->
+  <script src="https://cdn.jsdelivr.net/npm/html2canvas@1.4.1/dist/html2canvas.min.js"></script>
+  <!-- jsPDF + svg2pdf for vector polygons export -->
+  <script src="https://cdn.jsdelivr.net/npm/jspdf@2.5.1/dist/jspdf.umd.min.js"></script>
+  <script src="https://cdn.jsdelivr.net/npm/svg2pdf.js@2.2.1/dist/svg2pdf.umd.min.js"></script>
 
   <script>
     const map = L.map('map').setView([40.85, -73.4], 12);
@@ -202,6 +237,187 @@
         }
       });
     });
+
+    /* ---------- Legend (bottom-right) ---------- */
+    const LegendControl = L.Control.extend({
+      options: { position: 'bottomright' },
+      onAdd: function() {
+        const div = L.DomUtil.create('div', 'legend');
+        const header = L.DomUtil.create('div', 'hdr', div);
+        header.textContent = 'Heatmap: GOP % of Vote';
+
+        const bar = L.DomUtil.create('div', 'bar', div);
+        const stops = [0, 25, 50, 75, 100];
+        const gradient = stops.map(p => `${getColor(p)} ${p}%`).join(', ');
+        bar.style.background = `linear-gradient(to right, ${gradient})`;
+
+        const ticks = L.DomUtil.create('div', 'ticks', div);
+        ticks.innerHTML = `
+          <span>0%</span><span>25%</span><span>50%</span><span>75%</span><span>100%</span>
+        `;
+        const note = L.DomUtil.create('div', 'note', div);
+        note.innerHTML = '<span style="color:#001f3f;font-weight:700;">Blue</span> → <span style="font-weight:700;">White</span> → <span style="color:#8B0000;font-weight:700;">Red</span>';
+
+        L.DomEvent.disableClickPropagation(div);
+        return div;
+      }
+    });
+    map.addControl(new LegendControl());
+
+    /* ---------- Exports ---------- */
+
+    // Helper: download a blob
+    function downloadBlob(blob, filename) {
+      const url = URL.createObjectURL(blob);
+      const a = document.createElement('a');
+      a.href = url; a.download = filename; a.click();
+      setTimeout(() => URL.revokeObjectURL(url), 1000);
+    }
+
+    // PNG (raster) of current map view
+    function exportMapPNG() {
+      const mapEl = document.getElementById('map');
+      const uiEls = [document.getElementById('uploadBox')];
+      const prevVis = uiEls.map(el => el.style.visibility);
+      uiEls.forEach(el => el.style.visibility = 'hidden');
+
+      html2canvas(mapEl, { backgroundColor: null, useCORS: true }).then(canvas => {
+        const ts = new Date().toISOString().replace(/[:.]/g, '-');
+        canvas.toBlob(blob => downloadBlob(blob, `Huntington_Map_${ts}.png`));
+      }).catch(() => alert('Sorry—could not export PNG.'))
+        .finally(() => uiEls.forEach((el,i) => el.style.visibility = prevVis[i]));
+    }
+
+    // PDF (raster) using html2canvas image inside jsPDF
+    async function exportMapPDFRaster() {
+      const { jsPDF } = window.jspdf;
+      const mapEl = document.getElementById('map');
+      const uiEls = [document.getElementById('uploadBox')];
+      const prevVis = uiEls.map(el => el.style.visibility);
+      uiEls.forEach(el => el.style.visibility = 'hidden');
+
+      try {
+        const canvas = await html2canvas(mapEl, { backgroundColor: '#ffffff', useCORS: true, scale: 2 });
+        const imgData = canvas.toDataURL('image/png');
+
+        // Fit image to an A4 page (landscape) with margins
+        const pdf = new jsPDF({ orientation: 'landscape', unit: 'pt', format: 'a4' });
+        const pageW = pdf.internal.pageSize.getWidth();
+        const pageH = pdf.internal.pageSize.getHeight();
+        const margin = 24;
+        const maxW = pageW - margin*2;
+        const maxH = pageH - margin*2;
+
+        let drawW = canvas.width, drawH = canvas.height;
+        const scale = Math.min(maxW / drawW, maxH / drawH);
+        drawW *= scale; drawH *= scale;
+
+        pdf.addImage(imgData, 'PNG', (pageW - drawW)/2, (pageH - drawH)/2, drawW, drawH);
+        const ts = new Date().toISOString().replace(/[:.]/g, '-');
+        pdf.save(`Huntington_Map_${ts}.pdf`);
+      } catch {
+        alert('Sorry—could not export PDF.');
+      } finally {
+        uiEls.forEach((el,i) => el.style.visibility = prevVis[i]);
+      }
+    }
+
+    // PDF (vector polygons only): converts Leaflet's SVG overlay to PDF via svg2pdf.
+    // Note: Basemap tiles and HTML labels (divIcons) are NOT included—this is for crisp vector district fills/borders.
+    async function exportVectorPolygonsPDF() {
+      const { jsPDF } = window.jspdf;
+      const svgEl = map.getPanes().overlayPane.querySelector('svg');
+      if (!svgEl) { alert('No SVG overlay found to export.'); return; }
+
+      // Clone to avoid altering on-screen SVG
+      const svgClone = svgEl.cloneNode(true);
+      // Force solid fills to current colors (ensure no CSS dependency)
+      // Optional: tweak styles here if needed
+
+      // Build PDF
+      const pdf = new jsPDF({ orientation: 'landscape', unit: 'pt', format: 'a4' });
+      const pageW = pdf.internal.pageSize.getWidth();
+      const pageH = pdf.internal.pageSize.getHeight();
+      const margin = 24;
+      const drawW = pageW - margin*2;
+      const drawH = pageH - margin*2;
+
+      // Compute intrinsic SVG size
+      let vb = svgClone.getAttribute('viewBox');
+      let vbParams;
+      if (vb) {
+        vbParams = vb.split(/\s+/).map(Number);
+      } else {
+        const w = svgClone.width.baseVal.value || svgClone.getBoundingClientRect().width || 800;
+        const h = svgClone.height.baseVal.value || svgClone.getBoundingClientRect().height || 600;
+        vbParams = [0, 0, w, h];
+        svgClone.setAttribute('viewBox', `0 0 ${w} ${h}`);
+      }
+
+      const { svg2pdf } = window;
+      const options = {
+        x: margin,
+        y: margin,
+        width: drawW,
+        height: drawH,
+        preserveAspectRatio: 'xMidYMid meet'
+      };
+
+      // Draw a white background so fills are visible in the PDF
+      pdf.setFillColor(255,255,255);
+      pdf.rect(0,0,pageW,pageH,'F');
+
+      await svg2pdf(svgClone, pdf, options);
+
+      // Add a tiny caption
+      pdf.setFontSize(9);
+      pdf.text('Huntington Election Districts — Vector polygons export (no basemap/HTML labels)', margin, pageH - 8);
+
+      const ts = new Date().toISOString().replace(/[:.]/g, '-');
+      pdf.save(`Huntington_Map_VectorPolygons_${ts}.pdf`);
+    }
+
+    // Export joined properties as CSV (every feature currently in the layer)
+    function exportJoinedCSV() {
+      if (!geojsonLayer) { alert('Map not ready.'); return; }
+
+      // Collect rows
+      const rows = [];
+      const keysSet = new Set();
+
+      geojsonLayer.eachLayer(layer => {
+        if (layer && layer.feature && layer.feature.properties) {
+          rows.push(layer.feature.properties);
+          Object.keys(layer.feature.properties).forEach(k => keysSet.add(k));
+        }
+      });
+
+      const headers = Array.from(keysSet);
+      const lines = [];
+      lines.push(headers.map(h => `"${String(h).replace(/"/g,'""')}"`).join(','));
+
+      for (const row of rows) {
+        const vals = headers.map(h => {
+          const v = row[h];
+          if (v == null) return '';
+          const str = String(v);
+          // Escape quotes & wrap
+          return `"${str.replace(/"/g,'""')}"`;
+        });
+        lines.push(vals.join(','));
+      }
+
+      const csvStr = lines.join('\r\n');
+      const blob = new Blob([csvStr], { type: 'text/csv;charset=utf-8' });
+      const ts = new Date().toISOString().replace(/[:.]/g, '-');
+      downloadBlob(blob, `Huntington_Joined_${ts}.csv`);
+    }
+
+    // Wire up buttons
+    document.getElementById('exportPngBtn').addEventListener('click', exportMapPNG);
+    document.getElementById('exportPdfBtn').addEventListener('click', exportMapPDFRaster);
+    document.getElementById('exportVectorPdfBtn').addEventListener('click', exportVectorPolygonsPDF);
+    document.getElementById('exportCsvBtn').addEventListener('click', exportJoinedCSV);
   </script>
 </body>
 </html>
