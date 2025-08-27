@@ -9,27 +9,34 @@
     body { margin: 0; }
     #map { width: 100%; height: 100vh; }
     #uploadBox {
-      position: absolute; top: 10px; left: 10px; z-index: 1000;
+      position: absolute;
+      top: 10px; left: 10px; z-index: 1000;
       background: white; padding: 10px; border-radius: 8px;
       box-shadow: 0 2px 10px rgba(0,0,0,.15);
       font-family: system-ui, -apple-system, Segoe UI, Roboto, Arial, sans-serif;
-      max-width: 380px;
+      max-width: 360px;
     }
     .ed-label {
-      font-size: 12px; font-weight: bold; color: #000;
-      text-shadow: 0 0 2px #fff; text-align: center;
+      font-size: 12px; font-weight: 700; color: #000;
+      text-align: center; white-space: nowrap;
+      text-shadow: 0 0 3px #fff;
     }
     .ed-label--highlight {
-      background: #fff;
+      background: #ffffff;
       border: 3px solid #e02424;
-      border-radius: 50%; width: 28px; height: 28px;
+      border-radius: 50%;
+      width: 28px; height: 28px;
       display: flex; align-items: center; justify-content: center;
+      padding: 0;
       box-shadow: 0 0 6px rgba(0,0,0,0.45);
+      font-weight: 800;
+      font-size: 12px;
+      line-height: 1;
     }
     .tbl { border-collapse: collapse; width: 100%; font-size: 12px; }
     .tbl td { padding: 2px 4px; border-bottom: 1px solid #eee; }
 
-    /* Legend */
+    /* Legend styling */
     .legend {
       background: #fff; padding: 8px 10px; line-height: 1.2;
       color: #111; border-radius: 6px; box-shadow: 0 2px 8px rgba(0,0,0,.15);
@@ -45,413 +52,372 @@
     }
     .legend .hdr { font-weight: 700; font-size: 12px; }
     .legend .note { color:#555; font-size: 10px; margin-top: 2px; }
-
-    /* Buttons */
     .btn {
-      display:inline-block; margin-top:6px; padding:6px 10px; border-radius:6px;
+      display:inline-block; margin-top:8px; padding:6px 10px; border-radius:6px;
       border:1px solid #ddd; cursor:pointer; background:#f7f7f7;
       font-size:12px; font-weight:600;
     }
     .btn:hover { background:#f0f0f0; }
-    .inline { display:flex; gap:6px; flex-wrap:wrap; align-items:center; margin-top:6px; }
-    select { font-size:12px; padding:4px 6px; }
-
-    /* Exporting mode: neutralize Leaflet transforms so html2canvas reads positions correctly */
-    .exporting .leaflet-pane,
-    .exporting .leaflet-map-pane,
-    .exporting .leaflet-tile,
-    .exporting .leaflet-overlay-pane,
-    .exporting .leaflet-shadow-pane,
-    .exporting .leaflet-marker-pane,
-    .exporting .leaflet-tooltip-pane,
-    .exporting .leaflet-popup-pane { transform: none !important; }
-    .exporting .leaflet-tile-container { left: 0 !important; top: 0 !important; }
   </style>
 </head>
 <body>
   <div id="uploadBox">
     <label for="csvFile"><b>Upload CSV</b></label><br>
     <input type="file" id="csvFile" accept=".csv" />
-    <p style="font-size:12px; margin-top:4px;">Must include column <code>Committee Members</code>.<br>Optional: <code>Highlight</code> (put X to show).</p>
 
-    <div class="inline">
-      <label style="font-size:12px;">Raster method:</label>
-      <select id="rasterMethod">
-        <option value="html2canvas">With labels (html2canvas)</option>
-        <option value="leaflet-image">Stable (no labels)</option>
-      </select>
-    </div>
-
-    <div class="inline">
+    <div style="margin-top:6px">
       <button id="exportPngBtn" class="btn" title="Download a PNG of the current map view">Export PNG</button>
-      <button id="exportPdfBtn" class="btn" title="Download a PDF of the current map view">Export PDF</button>
+      <button id="exportPdfBtn" class="btn" title="Download a high-res PDF of the current map view">Export PDF</button>
       <button id="exportVectorPdfBtn" class="btn" title="Vector districts only (no basemap/HTML labels)">PDF (Vector Polygons)</button>
       <button id="exportCsvBtn" class="btn" title="Export the joined properties as CSV">Export Data (CSV)</button>
     </div>
   </div>
-
   <div id="map"></div>
 
   <script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"></script>
   <script src="https://cdn.jsdelivr.net/npm/papaparse@5.4.1/papaparse.min.js"></script>
   <script src="https://cdnjs.cloudflare.com/ajax/libs/chroma-js/2.1.0/chroma.min.js"></script>
   <script src="https://cdn.jsdelivr.net/npm/@turf/turf@6.5.0/turf.min.js"></script>
-  <!-- Raster capture (includes HTML labels) -->
+  <!-- html2canvas for raster PNG/PDF export -->
   <script src="https://cdn.jsdelivr.net/npm/html2canvas@1.4.1/dist/html2canvas.min.js"></script>
-  <!-- Alternative raster capture (very stable; no HTML labels) -->
-  <script src="https://unpkg.com/leaflet-image/leaflet-image.js"></script>
-  <!-- PDF + vector SVG to PDF -->
+  <!-- jsPDF + svg2pdf for vector polygons export -->
   <script src="https://cdn.jsdelivr.net/npm/jspdf@2.5.1/dist/jspdf.umd.min.js"></script>
   <script src="https://cdn.jsdelivr.net/npm/svg2pdf.js@2.2.1/dist/svg2pdf.umd.min.js"></script>
 
   <script>
-  const HEADER_ALIASES = {
-    'PRECINCT_ID': ['precinct_id','precinct id','precinctid','precinct code','precinct_code'],
-    'ED': ['ed','ed number','election district','ed_number'],
-    'Zone': ['zone'],
-    'Committee Members': ['committee members','committee_members','members'],
-    'GOP Candidate Votes': ['republican vote count (c+d)','republican vote count c+d','republican votes c+d','rep vote count (c+d)','gop votes c+d'],
-    'Opposition Candidate Vote': ['opposition vote count (a+b)','opposition vote count a+b','opposition votes a+b','opp votes a+b','opposition candidate votes'],
-    'Total Votes': ['total votes','votes total','total'],
-    'GOP Candidate Percent': ['republican percentage (c+d)','republican percent (c+d)','republican percentage c+d','gop percent','gop percentage'],
-    'Opposition Candidate Percent': ['opposition percentage (a+b)','opposition percent (a+b)','opp percent','opposition percentage'],
-    'Percent Difference': ['percentage difference (margin republican -opposition)','percentage difference margin republican opposition','margin','gop minus opposition','gop%-opp%']
-  };
-
-  const ALIAS_LOOKUP = {};
-  for (const [canonical, variants] of Object.entries(HEADER_ALIASES)) {
-    for (const v of variants) ALIAS_LOOKUP[v.toLowerCase()] = canonical;
-  }
-
-  function normalizeHeaders(row) {
-    const out = {};
-    for (const [key, val] of Object.entries(row)) {
-      const k = key?.toLowerCase().trim();
-      const std = ALIAS_LOOKUP[k] ?? key.trim();
-      out[std] = typeof val === 'string' ? val.trim() : val;
-    }
-    return out;
-  }
-
-  function getColor(value) {
-    if (isNaN(value)) return '#ccc';
-    const scaled = value / 50; // -50..50 -> -1..1
-    return chroma.scale(['#001f3f', 'white', '#8B0000']).domain([-1, 0, 1])(scaled).hex();
-  }
-
-  function fmtPctSmart(v) {
-    const s = String(v ?? '').trim();
-    if (s.endsWith('%')) return s;
-    const n = Number(s.replace(/[, ]/g, ''));
-    return Number.isFinite(n) ? `${n.toFixed(2)}%` : '—';
-  }
-
-  const nl2br = s => String(s ?? '').replace(/\r?\n/g, '<br>');
-
-  function drawPopup(props) {
-    const ed = props.ED ?? props['ED Number'] ?? '';
-    let html = `<div style="min-width:260px"><div><strong>Election District:</strong> ${ed}</div>`;
-    const members = props['Committee Members'];
-    if (members) html += `<hr><div><strong>Committee Members</strong><br>${nl2br(members)}</div>`;
-
-    const orderedKeys = [
-      'AD', 'SD', 'CD', 'LD',
-      'GOP Candidate Votes',
-      'Opposition Candidate Vote',
-      'GOP Candidate Percent',
-      'Opposition Candidate Percent',
-      'Percent Difference',
-      'Total Votes'
-    ];
-    html += `<hr><table class="tbl">`;
-    for (const key of orderedKeys) {
-      if (!props[key]) continue;
-      const val = key.toLowerCase().includes('percent') ? fmtPctSmart(props[key]) : props[key];
-      html += `<tr><td><b>${key}</b></td><td style="text-align:right">${val}</td></tr>`;
-    }
-    html += `</table></div>`;
-    return html;
-  }
-
-  function isMonitored(props) {
-    const raw = props.Highlight ?? props.HIGHLIGHT ?? props.highlight;
-    return String(raw ?? '').trim().toUpperCase() === 'X';
-  }
-
-  const map = L.map('map').setView([40.85, -73.4], 12);
-  L.tileLayer('https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png', {
-    maxZoom: 19,
-    attribution: '&copy; OpenStreetMap contributors',
-    crossOrigin: 'anonymous' // helps raster export
-  }).addTo(map);
-
-  let geojsonLayer;
-  const labelLayer = L.layerGroup().addTo(map);
-
-  function loadGeoJSON(data, csvData = null) {
-    if (geojsonLayer) map.removeLayer(geojsonLayer);
-    labelLayer.clearLayers();
-
-    const csvMap = new Map();
-    if (csvData) {
-      csvData.forEach(row => {
-        const r = normalizeHeaders(row);
-        const k = r['PRECINCT_ID'];
-        if (k) csvMap.set(String(k).trim(), r);
-      });
-    }
-
-    data.features.forEach(f => {
-      const props = f.properties ?? {};
-      const k = props['PRECINCT_ID'] ?? props['PRECINCTID'];
-      const row = csvMap.get(String(k).trim());
-      if (row) f.properties = { ...props, ...row };
-    });
-
-    geojsonLayer = L.geoJSON(data, {
-      style: function (feature) {
-        const p = feature.properties;
-        const val = parseFloat((p['Percent Difference'] || '').replace('%','')); // GOP% - Opp%
-        return {
-          fillColor: getColor(val),
-          color: "#333",
-          weight: 1,
-          fillOpacity: 0.85
-        };
-      },
-      onEachFeature: function (feature, layer) {
-        const p = feature.properties;
-        layer.bindPopup(drawPopup(p));
-
-        try {
-          const center = turf.centroid(feature).geometry.coordinates;
-          const labelClass = isMonitored(p) ? 'ed-label ed-label--highlight' : 'ed-label';
-          const iconSize = isMonitored(p) ? [28, 28] : [40, 20];
-          const iconAnchor = isMonitored(p) ? [14, 14] : [20, 10];
-          const edText = p.ED ?? '';
-          const label = L.marker([center[1], center[0]], {
-            icon: L.divIcon({
-              className: labelClass,
-              html: `<div>${edText}</div>`,
-              iconSize: iconSize,
-              iconAnchor: iconAnchor
-            }),
-            interactive: false
-          });
-          labelLayer.addLayer(label);
-        } catch (e) {}
-      }
+    const map = L.map('map').setView([40.85, -73.4], 12);
+    L.tileLayer("https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png", {
+      maxZoom: 19, attribution: '&copy; OpenStreetMap contributors'
     }).addTo(map);
-  }
 
-  fetch("Election_District.geojson")
-    .then(res => res.json())
-    .then(data => loadGeoJSON(data));
+    let geojsonLayer;
+    const labelLayer = L.layerGroup().addTo(map);
 
-  document.getElementById("csvFile").addEventListener("change", function (e) {
-    const file = e.target.files[0];
-    if (!file) return;
-    Papa.parse(file, {
-      header: true,
-      dynamicTyping: false,
-      skipEmptyLines: 'greedy',
-      complete: function(results) {
-        fetch("Election_District.geojson")
-          .then(res => res.json())
-          .then(data => loadGeoJSON(data, results.data.map(normalizeHeaders)));
+    function getColor(value) {
+      if (isNaN(value)) return '#ccc';
+      const scaled = (value - 50) / 50;  // maps 0–100% GOP vote to -1 to +1
+      return chroma.scale(['#001f3f', 'white', '#8B0000']).domain([-1, 0, 1])(scaled).hex();
+    }
+
+    const nl2br = s => String(s ?? '').replace(/\r?\n/g, '<br>');
+
+    function fmtPctSmart(v) {
+      if (v == null) return '—';
+      const s = String(v).trim();
+      if (s === '') return '—';
+      if (s.endsWith('%')) return s;
+      const n = Number(s.replace(/[, ]/g, ''));
+      if (!Number.isFinite(n)) return s;
+      return `${n.toFixed(2)}%`;
+    }
+
+    function drawPopup(props) {
+      const name = props.ED ?? props['ED Number'] ?? props.NAME ?? '';
+      let html = `<div style="min-width:260px">`;
+      html += `<div><strong>Election District:</strong> ${name}</div>`;
+
+      const members = props['Committee Members'];
+      if (members && String(members).trim() !== '') {
+        html += `<hr><div><strong>Committee Members</strong><br>${nl2br(members)}</div>`;
+      }
+
+      const orderedKeys = [
+        'AD', 'SD', 'TD', 'CD', 'LD',
+        'GOP Candidate Votes',
+        'Opposition Candidate Vote',
+        'GOP Candidate Percent',
+        'Opposition Candidate Percent',
+        'Percent Difference',
+        'Total Votes'
+      ];
+
+      html += `<hr><table class="tbl">`;
+      for (const key of orderedKeys) {
+        if (!props[key]) continue;
+        let val = props[key] ?? 'N/A';
+        if (key.toLowerCase().includes('percent')) val = fmtPctSmart(val);
+        html += `<tr><td><b>${key}</b></td><td style="text-align:right">${val}</td></tr>`;
+      }
+      html += `</table></div>`;
+      return html;
+    }
+
+    function isMonitored(props) {
+      const raw = props.Highlight ?? props.HIGHLIGHT ?? props.highlight;
+      return String(raw ?? '').trim().toUpperCase() === 'X';
+    }
+
+    function loadGeoJSON(data, csvData = null) {
+      if (geojsonLayer) map.removeLayer(geojsonLayer);
+      labelLayer.clearLayers();
+
+      const csvMap = new Map();
+      if (csvData) {
+        csvData.forEach(row => {
+          if (!row) return;
+          const k = row["PRECINCT_ID"] ?? row["PRECINCTID"];
+          if (k != null) csvMap.set(String(k).trim(), row);
+        });
+      }
+
+      data.features.forEach(f => {
+        const props = f.properties || {};
+        const precinctKey =
+          (props.PRECINCT_ID != null ? String(props.PRECINCT_ID).trim() : null) ||
+          (props.PRECINCTID != null ? String(props.PRECINCTID).trim() : null);
+        const row = precinctKey ? csvMap.get(precinctKey) : null;
+        if (row) f.properties = { ...props, ...row };
+      });
+
+      geojsonLayer = L.geoJSON(data, {
+        style: function (feature) {
+          const raw = feature.properties['GOP Candidate Percent'];
+          let parsed = 0;
+          if (typeof raw === 'string' && raw.trim().endsWith('%')) {
+            parsed = parseFloat(raw.trim().replace('%', ''));
+          } else {
+            parsed = Number(raw);
+          }
+          return {
+            fillColor: getColor(parsed),
+            color: "#333",
+            weight: 1,
+            fillOpacity: 0.85
+          };
+        },
+        onEachFeature: function (feature, layer) {
+          const p = feature.properties;
+          layer.bindPopup(drawPopup(p));
+
+          try {
+            const center = turf.centroid(feature).geometry.coordinates;
+            const edText = p.ED ?? p['ED Number'] ?? '';
+            const labelClass = isMonitored(p) ? 'ed-label ed-label--highlight' : 'ed-label';
+            const iconSize = isMonitored(p) ? [28, 28] : [40, 20];
+            const iconAnchor = isMonitored(p) ? [14, 14] : [20, 10];
+
+            const label = L.marker([center[1], center[0]], {
+              icon: L.divIcon({
+                className: labelClass,
+                html: `<div>${edText}</div>`,
+                iconSize: iconSize,
+                iconAnchor: iconAnchor
+              }),
+              interactive: false
+            });
+            labelLayer.addLayer(label);
+          } catch (e) {}
+        }
+      }).addTo(map);
+    }
+
+    fetch("Election_District.geojson")
+      .then(res => res.json())
+      .then(data => loadGeoJSON(data));
+
+    document.getElementById("csvFile").addEventListener("change", function (e) {
+      const file = e.target.files[0];
+      if (!file) return;
+      Papa.parse(file, {
+        header: true,
+        dynamicTyping: false,
+        skipEmptyLines: 'greedy',
+        complete: function(results) {
+          const cleaned = results.data.map(row => {
+            const fixed = {};
+            for (const [key, val] of Object.entries(row)) {
+              if (!key) continue;
+              fixed[key.trim()] = typeof val === 'string' ? val.trim() : val;
+            }
+            return fixed;
+          });
+          fetch("Election_District.geojson")
+            .then(res => res.json())
+            .then(data => loadGeoJSON(data, cleaned));
+        }
+      });
+    });
+
+    /* ---------- Legend (bottom-right) ---------- */
+    const LegendControl = L.Control.extend({
+      options: { position: 'bottomright' },
+      onAdd: function() {
+        const div = L.DomUtil.create('div', 'legend');
+        const header = L.DomUtil.create('div', 'hdr', div);
+        header.textContent = 'Heatmap: GOP % of Vote';
+
+        const bar = L.DomUtil.create('div', 'bar', div);
+        const stops = [0, 25, 50, 75, 100];
+        const gradient = stops.map(p => `${getColor(p)} ${p}%`).join(', ');
+        bar.style.background = `linear-gradient(to right, ${gradient})`;
+
+        const ticks = L.DomUtil.create('div', 'ticks', div);
+        ticks.innerHTML = `
+          <span>0%</span><span>25%</span><span>50%</span><span>75%</span><span>100%</span>
+        `;
+        const note = L.DomUtil.create('div', 'note', div);
+        note.innerHTML = '<span style="color:#001f3f;font-weight:700;">Blue</span> → <span style="font-weight:700;">White</span> → <span style="color:#8B0000;font-weight:700;">Red</span>';
+
+        L.DomEvent.disableClickPropagation(div);
+        return div;
       }
     });
-  });
+    map.addControl(new LegendControl());
 
-  /* ---------- Legend (bottom-right) ---------- */
-  const LegendControl = L.Control.extend({
-    options: { position: 'bottomright' },
-    onAdd: function() {
-      const div = L.DomUtil.create('div', 'legend');
-      const header = L.DomUtil.create('div', 'hdr', div);
-      header.textContent = 'Margin: GOP − Opposition (pp)';
+    /* ---------- Exports ---------- */
 
-      const bar = L.DomUtil.create('div', 'bar', div);
-      const stops = [-50, -25, 0, 25, 50];
-      const gradient = stops.map(p => `${getColor(p)} ${(p+50)*2}%`).join(', ');
-      bar.style.background = `linear-gradient(to right, ${gradient})`;
-
-      const ticks = L.DomUtil.create('div', 'ticks', div);
-      ticks.innerHTML = `
-        <span>−50%</span><span>−25%</span><span>0</span><span>25%</span><span>50%</span>
-      `;
-      const note = L.DomUtil.create('div', 'note', div);
-      note.innerHTML = '<span style="color:#001f3f;font-weight:700;">Blue</span> → <span style="font-weight:700;">White</span> → <span style="color:#8B0000;font-weight:700;">Red</span>';
-
-      L.DomEvent.disableClickPropagation(div);
-      return div;
-    }
-  });
-  map.addControl(new LegendControl());
-
-  /* ---------- Export helpers (fixed) ---------- */
-  function waitForIdle() {
-    return new Promise(resolve => {
-      // Leaflet fires 'idle' after move/zoom; add a tiny delay for tiles.
-      const done = () => requestAnimationFrame(() => setTimeout(resolve, 60));
-      if (!map._animatingZoom && !map._panAnim && !map._sizeChanged) done();
-      else map.once('idle', done);
-    });
-  }
-
-  function toggleExportMode(on) {
-    const mapEl = document.getElementById('map');
-    const uploadEl = document.getElementById('uploadBox');
-    if (on) {
-      mapEl.classList.add('exporting');
-      if (map.closePopup) map.closePopup();
-      uploadEl.style.visibility = 'hidden';
-    } else {
-      mapEl.classList.remove('exporting');
-      uploadEl.style.visibility = 'visible';
-    }
-  }
-
-  function downloadBlob(blob, filename) {
-    const url = URL.createObjectURL(blob);
-    const a = document.createElement('a');
-    a.href = url; a.download = filename; a.click();
-    setTimeout(() => URL.revokeObjectURL(url), 1000);
-  }
-
-  // html2canvas (includes labels)
-  async function exportMapPNG_html2canvas() {
-    await waitForIdle();
-    toggleExportMode(true);
-    try {
-      const canvas = await html2canvas(document.getElementById('map'), {
-        backgroundColor: '#ffffff', useCORS: true, scale: 2
-      });
-      const ts = new Date().toISOString().replace(/[:.]/g, '-');
-      canvas.toBlob(b => downloadBlob(b, `Huntington_Map_${ts}.png`));
-    } catch (e) {
-      alert('PNG export failed.');
-    } finally { toggleExportMode(false); }
-  }
-
-  async function exportMapPDF_html2canvas() {
-    const { jsPDF } = window.jspdf;
-    await waitForIdle();
-    toggleExportMode(true);
-    try {
-      const canvas = await html2canvas(document.getElementById('map'), {
-        backgroundColor: '#ffffff', useCORS: true, scale: 2
-      });
-      const imgData = canvas.toDataURL('image/png');
-      const pdf = new jsPDF({ orientation: 'landscape', unit: 'pt', format: 'a4' });
-      const W = pdf.internal.pageSize.getWidth(), H = pdf.internal.pageSize.getHeight();
-      const margin = 24, maxW = W - margin*2, maxH = H - margin*2;
-      let w = canvas.width, h = canvas.height, s = Math.min(maxW/w, maxH/h);
-      pdf.addImage(imgData, 'PNG', (W-w*s)/2, (H-h*s)/2, w*s, h*s);
-      const ts = new Date().toISOString().replace(/[:.]/g, '-');
-      pdf.save(`Huntington_Map_${ts}.pdf`);
-    } catch (e) {
-      alert('PDF export failed.');
-    } finally { toggleExportMode(false); }
-  }
-
-  // leaflet-image (no HTML labels)
-  async function exportMapPNG_leafletImage() {
-    await waitForIdle();
-    toggleExportMode(true);
-    leafletImage(map, function(err, canvas) {
-      toggleExportMode(false);
-      if (err || !canvas) return alert('leaflet-image export failed.');
-      const ts = new Date().toISOString().replace(/[:.]/g, '-');
-      canvas.toBlob(b => downloadBlob(b, `Huntington_Map_${ts}.png`));
-    });
-  }
-
-  async function exportMapPDF_leafletImage() {
-    const { jsPDF } = window.jspdf;
-    await waitForIdle();
-    toggleExportMode(true);
-    leafletImage(map, function(err, canvas) {
-      toggleExportMode(false);
-      if (err || !canvas) return alert('leaflet-image export failed.');
-      const pdf = new jsPDF({ orientation: 'landscape', unit: 'pt', format: 'a4' });
-      const W = pdf.internal.pageSize.getWidth(), H = pdf.internal.pageSize.getHeight();
-      const margin = 24, maxW = W - margin*2, maxH = H - margin*2;
-      let w = canvas.width, h = canvas.height, s = Math.min(maxW/w, maxH/h);
-      const img = canvas.toDataURL('image/png');
-      pdf.addImage(img, 'PNG', (W-w*s)/2, (H-h*s)/2, w*s, h*s);
-      const ts = new Date().toISOString().replace(/[:.]/g, '-');
-      pdf.save(`Huntington_Map_${ts}.pdf`);
-    });
-  }
-
-  // Vector polygons only (SVG overlay -> PDF)
-  async function exportVectorPolygonsPDF() {
-    const { jsPDF } = window.jspdf;
-    const svgEl = map.getPanes().overlayPane.querySelector('svg');
-    if (!svgEl) { alert('No SVG overlay found to export.'); return; }
-
-    const svgClone = svgEl.cloneNode(true);
-    const pdf = new jsPDF({ orientation: 'landscape', unit: 'pt', format: 'a4' });
-    const pageW = pdf.internal.pageSize.getWidth();
-    const pageH = pdf.internal.pageSize.getHeight();
-    const margin = 24;
-    const drawW = pageW - margin*2;
-    const drawH = pageH - margin*2;
-
-    if (!svgClone.getAttribute('viewBox')) {
-      const w = svgClone.width.baseVal.value || svgClone.getBoundingClientRect().width || 800;
-      const h = svgClone.height.baseVal.value || svgClone.getBoundingClientRect().height || 600;
-      svgClone.setAttribute('viewBox', `0 0 ${w} ${h}`);
+    // Helper: download a blob
+    function downloadBlob(blob, filename) {
+      const url = URL.createObjectURL(blob);
+      const a = document.createElement('a');
+      a.href = url; a.download = filename; a.click();
+      setTimeout(() => URL.revokeObjectURL(url), 1000);
     }
 
-    const { svg2pdf } = window;
-    const options = { x: margin, y: margin, width: drawW, height: drawH, preserveAspectRatio: 'xMidYMid meet' };
-    pdf.setFillColor(255,255,255); pdf.rect(0,0,pageW,pageH,'F');
-    await svg2pdf(svgClone, pdf, options);
-    pdf.setFontSize(9);
-    pdf.text('Huntington Election Districts — Vector polygons export (no basemap/HTML labels)', margin, pageH - 8);
-    const ts = new Date().toISOString().replace(/[:.]/g, '-');
-    pdf.save(`Huntington_Map_VectorPolygons_${ts}.pdf`);
-  }
+    // PNG (raster) of current map view
+    function exportMapPNG() {
+      const mapEl = document.getElementById('map');
+      const uiEls = [document.getElementById('uploadBox')];
+      const prevVis = uiEls.map(el => el.style.visibility);
+      uiEls.forEach(el => el.style.visibility = 'hidden');
 
-  // Export joined properties as CSV
-  function exportJoinedCSV() {
-    if (!geojsonLayer) { alert('Map not ready.'); return; }
-    const rows = []; const keysSet = new Set();
-    geojsonLayer.eachLayer(layer => {
-      if (layer && layer.feature && layer.feature.properties) {
-        rows.push(layer.feature.properties);
-        Object.keys(layer.feature.properties).forEach(k => keysSet.add(k));
+      html2canvas(mapEl, { backgroundColor: null, useCORS: true }).then(canvas => {
+        const ts = new Date().toISOString().replace(/[:.]/g, '-');
+        canvas.toBlob(blob => downloadBlob(blob, `Huntington_Map_${ts}.png`));
+      }).catch(() => alert('Sorry—could not export PNG.'))
+        .finally(() => uiEls.forEach((el,i) => el.style.visibility = prevVis[i]));
+    }
+
+    // PDF (raster) using html2canvas image inside jsPDF
+    async function exportMapPDFRaster() {
+      const { jsPDF } = window.jspdf;
+      const mapEl = document.getElementById('map');
+      const uiEls = [document.getElementById('uploadBox')];
+      const prevVis = uiEls.map(el => el.style.visibility);
+      uiEls.forEach(el => el.style.visibility = 'hidden');
+
+      try {
+        const canvas = await html2canvas(mapEl, { backgroundColor: '#ffffff', useCORS: true, scale: 2 });
+        const imgData = canvas.toDataURL('image/png');
+
+        // Fit image to an A4 page (landscape) with margins
+        const pdf = new jsPDF({ orientation: 'landscape', unit: 'pt', format: 'a4' });
+        const pageW = pdf.internal.pageSize.getWidth();
+        const pageH = pdf.internal.pageSize.getHeight();
+        const margin = 24;
+        const maxW = pageW - margin*2;
+        const maxH = pageH - margin*2;
+
+        let drawW = canvas.width, drawH = canvas.height;
+        const scale = Math.min(maxW / drawW, maxH / drawH);
+        drawW *= scale; drawH *= scale;
+
+        pdf.addImage(imgData, 'PNG', (pageW - drawW)/2, (pageH - drawH)/2, drawW, drawH);
+        const ts = new Date().toISOString().replace(/[:.]/g, '-');
+        pdf.save(`Huntington_Map_${ts}.pdf`);
+      } catch {
+        alert('Sorry—could not export PDF.');
+      } finally {
+        uiEls.forEach((el,i) => el.style.visibility = prevVis[i]);
       }
-    });
-    const headers = Array.from(keysSet);
-    const lines = [];
-    lines.push(headers.map(h => `"${String(h).replace(/"/g,'""')}"`).join(','));
-    for (const row of rows) {
-      const vals = headers.map(h => {
-        const v = row[h]; if (v == null) return '';
-        return `"${String(v).replace(/"/g,'""')}"`;
-      });
-      lines.push(vals.join(','));
     }
-    const csvStr = lines.join('\r\n');
-    const blob = new Blob([csvStr], { type: 'text/csv;charset=utf-8' });
-    const ts = new Date().toISOString().replace(/[:.]/g, '-');
-    downloadBlob(blob, `Huntington_Joined_${ts}.csv`);
-  }
 
-  // Wire up buttons (choose raster method from dropdown)
-  function currentRaster() { return document.getElementById('rasterMethod').value; }
+    // PDF (vector polygons only): converts Leaflet's SVG overlay to PDF via svg2pdf.
+    // Note: Basemap tiles and HTML labels (divIcons) are NOT included—this is for crisp vector district fills/borders.
+    async function exportVectorPolygonsPDF() {
+      const { jsPDF } = window.jspdf;
+      const svgEl = map.getPanes().overlayPane.querySelector('svg');
+      if (!svgEl) { alert('No SVG overlay found to export.'); return; }
 
-  document.getElementById('exportPngBtn').addEventListener('click', () => {
-    currentRaster() === 'html2canvas' ? exportMapPNG_html2canvas() : exportMapPNG_leafletImage();
-  });
-  document.getElementById('exportPdfBtn').addEventListener('click', () => {
-    currentRaster() === 'html2canvas' ? exportMapPDF_html2canvas() : exportMapPDF_leafletImage();
-  });
-  document.getElementById('exportVectorPdfBtn').addEventListener('click', exportVectorPolygonsPDF);
-  document.getElementById('exportCsvBtn').addEventListener('click', exportJoinedCSV);
+      // Clone to avoid altering on-screen SVG
+      const svgClone = svgEl.cloneNode(true);
+      // Force solid fills to current colors (ensure no CSS dependency)
+      // Optional: tweak styles here if needed
+
+      // Build PDF
+      const pdf = new jsPDF({ orientation: 'landscape', unit: 'pt', format: 'a4' });
+      const pageW = pdf.internal.pageSize.getWidth();
+      const pageH = pdf.internal.pageSize.getHeight();
+      const margin = 24;
+      const drawW = pageW - margin*2;
+      const drawH = pageH - margin*2;
+
+      // Compute intrinsic SVG size
+      let vb = svgClone.getAttribute('viewBox');
+      let vbParams;
+      if (vb) {
+        vbParams = vb.split(/\s+/).map(Number);
+      } else {
+        const w = svgClone.width.baseVal.value || svgClone.getBoundingClientRect().width || 800;
+        const h = svgClone.height.baseVal.value || svgClone.getBoundingClientRect().height || 600;
+        vbParams = [0, 0, w, h];
+        svgClone.setAttribute('viewBox', `0 0 ${w} ${h}`);
+      }
+
+      const { svg2pdf } = window;
+      const options = {
+        x: margin,
+        y: margin,
+        width: drawW,
+        height: drawH,
+        preserveAspectRatio: 'xMidYMid meet'
+      };
+
+      // Draw a white background so fills are visible in the PDF
+      pdf.setFillColor(255,255,255);
+      pdf.rect(0,0,pageW,pageH,'F');
+
+      await svg2pdf(svgClone, pdf, options);
+
+      // Add a tiny caption
+      pdf.setFontSize(9);
+      pdf.text('Huntington Election Districts — Vector polygons export (no basemap/HTML labels)', margin, pageH - 8);
+
+      const ts = new Date().toISOString().replace(/[:.]/g, '-');
+      pdf.save(`Huntington_Map_VectorPolygons_${ts}.pdf`);
+    }
+
+    // Export joined properties as CSV (every feature currently in the layer)
+    function exportJoinedCSV() {
+      if (!geojsonLayer) { alert('Map not ready.'); return; }
+
+      // Collect rows
+      const rows = [];
+      const keysSet = new Set();
+
+      geojsonLayer.eachLayer(layer => {
+        if (layer && layer.feature && layer.feature.properties) {
+          rows.push(layer.feature.properties);
+          Object.keys(layer.feature.properties).forEach(k => keysSet.add(k));
+        }
+      });
+
+      const headers = Array.from(keysSet);
+      const lines = [];
+      lines.push(headers.map(h => `"${String(h).replace(/"/g,'""')}"`).join(','));
+
+      for (const row of rows) {
+        const vals = headers.map(h => {
+          const v = row[h];
+          if (v == null) return '';
+          const str = String(v);
+          // Escape quotes & wrap
+          return `"${str.replace(/"/g,'""')}"`;
+        });
+        lines.push(vals.join(','));
+      }
+
+      const csvStr = lines.join('\r\n');
+      const blob = new Blob([csvStr], { type: 'text/csv;charset=utf-8' });
+      const ts = new Date().toISOString().replace(/[:.]/g, '-');
+      downloadBlob(blob, `Huntington_Joined_${ts}.csv`);
+    }
+
+    // Wire up buttons
+    document.getElementById('exportPngBtn').addEventListener('click', exportMapPNG);
+    document.getElementById('exportPdfBtn').addEventListener('click', exportMapPDFRaster);
+    document.getElementById('exportVectorPdfBtn').addEventListener('click', exportVectorPolygonsPDF);
+    document.getElementById('exportCsvBtn').addEventListener('click', exportJoinedCSV);
   </script>
 </body>
 </html>
